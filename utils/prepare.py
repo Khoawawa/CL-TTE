@@ -193,13 +193,13 @@ def create_model(args):
     return Cl_TTE(**model_config)
         
 
-def create_main_loss(loss_cl,loss_eta, args):
+def create_main_loss(loss_eta,loss_cl, args):
     beta = args.beta
     
     # scale = (loss_eta.detach() / (loss_cl.detach() + 1e-6))
     scale = 1 / (loss_cl / loss_eta + 1e-4).detach()
     # loss_cl_scaled = loss_cl * scale.clamp(0.1, 10.0)   
-    loss_cl_scaled = loss_cl * scale.clamp(0.1, 10.0)
+    loss_cl_scaled = loss_cl * scale.clamp(0.01, 10.0)
     
     return beta * loss_eta + (1 - beta) * loss_cl_scaled
   
