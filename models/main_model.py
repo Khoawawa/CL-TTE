@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models.blocks.encoder import SegmentEncoder, ContrastiveEncoder
 from models.blocks.LayerNormGRU import LayerNormGRU
-
+import copy
 class Cl_TTE(nn.Module):
     def __init__(self, d_model, nhead, nlayer, seq_layer,decoder_layer):
         super().__init__()
