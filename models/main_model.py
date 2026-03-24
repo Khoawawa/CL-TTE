@@ -38,7 +38,7 @@ class Cl_TTE(nn.Module):
         
         segment_rep, datetimerep = self.segment_encoder(links,dateinfo,lens)  # (B, T, D)
         
-        z, l_cl = self.contrastive(segment_rep, lens,args.mask_prob, args.noise, args.r, y_true) # (B, T, D)
+        z, l_cl = self.contrastive(segment_rep, lens,args.mask_prob, args.data_config['noise'], args.data_config['r_percentile'], y_true) # (B, T, D)
         
         z_time = torch.concat([z, datetimerep], dim=-1) # (B,D + 33)
         

@@ -24,7 +24,7 @@ class ReCo(nn.Module):
         denom = denom.clamp(min=1e-6)
         
         return x_sum / denom
-    def check_positive(self, y_true, r):
+    def check_positive(self, y_true, r_percentile):
         # y_true: (B,) or (B,1)
         if y_true.dim() == 2:
             y_true = y_true.squeeze(-1)
@@ -35,13 +35,17 @@ class ReCo(nn.Module):
 
         # pairwise distance
         dist = torch.abs(y_all.unsqueeze(0) - y_all.unsqueeze(1))  # (2B, 2B)
+        
+        upper_tri = dist[torch.triu_indices(dist.size(0), dist.size(1), offset=1)]
+        dynamic_r = torch.quantile(upper_tri, r_percentile)
 
-        pos_mask = (dist <= r).float()
+        pos_mask = (dist <= dynamic_r).float()
 
         # remove self-pairs
         pos_mask.fill_diagonal_(0)
 
         return pos_mask
+    
     def contrastive_loss(self, z, pos_mask, temperature=0.05):
         # z: (2B, D) normalized
         sim = torch.matmul(z, z.T) / temperature  # (2B, 2B)
@@ -66,7 +70,7 @@ class ReCo(nn.Module):
 
         return loss.mean()
     
-    def forward(self,x,x_aug,r,src_key_padding_mask=None,y_true=None):
+    def forward(self,x,x_aug,r_percentile,src_key_padding_mask=None,y_true=None):
         # x: (B, T, D)
         # x_aug: (B, T, D)
         valid_mask = ~src_key_padding_mask
@@ -84,7 +88,7 @@ class ReCo(nn.Module):
         if y_true is None:
             l_cl = None
         else:
-            pos_mask = self.check_positive(y_true,r)
+            pos_mask = self.check_positive(y_true,r_percentile)
             
             l_cl = self.contrastive_loss(z_all,pos_mask)
          
