@@ -27,7 +27,6 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--mask_rate', type=float, help='intput the mask rate of segments in a trajectory', default=0.4)
     parser.add_argument('-s', '--seed', type=int, help='input the seed', default=42)
     parser.add_argument('--mask_prob', type=float, help='input the merge ratio of segments in a trajectory for contrastive learning', default=0.15)
-    parser.add_argument('--noise', type=float, help='input the max span of segments to be merged in a trajectory for contrastive learning', default=0.01)
     args = parser.parse_args()
     args.absPath = os.path.dirname(os.path.abspath(__file__))
     print(args.model)

@@ -23,7 +23,7 @@ class ContrastiveEncoder(nn.Module):
         # split into 80/10/10
         rand2 = torch.rand(B, T, device=device)
 
-        mask_token = self.pad_token.expand(B, T, -1)
+        mask_token = self.pad_token.expand(B, T, -1).to(dtype=x.dtype)
 
         x_masked = x.clone()
 
