@@ -91,7 +91,7 @@ class ReCo(nn.Module):
             
             l_cl = self.contrastive_loss(z_all,pos_mask)
          
-        return z, l_cl
+        return h, l_cl
         
 class MSM(nn.Module):
     def __init__(self, d_model,nhead, dropout=0.1, nlayer=4):
