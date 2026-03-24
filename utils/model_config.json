@@ -1,0 +1,11 @@
+{
+    "CL_TTE":{
+        "seq_hidden_dim": 128,
+        "seq_layer": 2,
+        "decoder_layer": 3,
+        "bert_attention_heads": 8,
+        "bert_hiden_size": 64,
+        "bert_hidden_layers":4
+    }
+    
+}
