@@ -55,7 +55,7 @@ class Cl_TTE(nn.Module):
             d = self.decoder(h.float(), inputs['lens'].long())
         d = d.transpose(0,1).contiguous()
         
-        z =  (d * segment_mask.unsqeeze(-1)).sum(dim=1) # (B, D)
+        z =  (d * segment_mask.unsqueeze(-1)).sum(dim=1) # (B, D)
         
         z_time = torch.concat([z, datetimerep], dim=-1) # (B,D + 33)
         
