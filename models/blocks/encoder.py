@@ -6,7 +6,7 @@ from models.base.PositionalEncoding import CyclicalTimeEncoding, PositionalEncod
 from models.blocks.cl import MSM, ReCo
 
 class ContrastiveEncoder(nn.Module):
-    def __init__(self, d_model, nhead, dropout=0.1, nlayer=4, queue_size=1024, temperature=0.05):
+    def __init__(self, d_model, nhead, dropout=0.1, nlayer=4):
         super().__init__()
         self.reco = ReCo(d_model,nhead,dropout,nlayer)
         self.pad_token = nn.Parameter(torch.zeros(1, 1, d_model))
@@ -52,8 +52,6 @@ class ContrastiveEncoder(nn.Module):
         z, l_cl = self.reco(x,x_aug,r,src_padding_mask,y_true)
         
         return z, l_cl
-    def loss(self, logits, labels):
-        return self.moco.loss(logits, labels)  
     
 class SegmentEncoder(nn.Module):
     def __init__(self, d_model=128):

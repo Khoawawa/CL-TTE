@@ -30,6 +30,7 @@ class ReCo(nn.Module):
             y_true = y_true.squeeze(-1)
 
         # duplicate for 2 views
+        y_true = y_true.detach()
         y_all = torch.cat([y_true, y_true], dim=0)  # (2B,)
 
         # pairwise distance
@@ -79,7 +80,7 @@ class ReCo(nn.Module):
         z = F.normalize(z, dim=-1)
         z_aug = F.normalize(z_aug, dim=-1)
         
-        z_all = torch.concat([z,z_aug],dim=0) # (2B, D)
+        z_all = torch.cat([z,z_aug],dim=0) # (2B, D)
         if y_true is None:
             l_cl = None
         else:

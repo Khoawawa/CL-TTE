@@ -63,11 +63,14 @@ def train_model(model: nn.Module, data_loaders: Dict[str, DataLoader],
                     features = to_var(features, args.device)
                     truth_data = to_var(truth_data, args.device)
                     
+                    truth_data_log = torch.log1p(truth_data)
+                    
                     with torch.set_grad_enabled(phase == 'train'):
                         with torch.amp.autocast(args.device):
-                            output, loss_cl = model(features, args)       
-                                           
+                            output, loss_cl = model(features,truth_data_log, args)       
+                                 
                             loss_eta = loss_func(truth=truth_data, predict=output)
+                            
                             if phase == 'train':  
                                 loss = create_main_loss(loss_eta,loss_cl,args)
                             else:
@@ -89,7 +92,7 @@ def train_model(model: nn.Module, data_loaders: Dict[str, DataLoader],
                         + desc
                     )
                     with torch.no_grad():
-                        predictions.append(output.detach().cpu())
+                        predictions.append(torch.expm1(output.detach().cpu()))
                         targets.append(truth_data.detach().cpu())
 
                     running_loss[phase] += loss.item() * truth_data.size(0)
@@ -126,19 +129,16 @@ def train_model(model: nn.Module, data_loaders: Dict[str, DataLoader],
                         print(f"New best MAE {best_mae} at epoch {epoch}, model saved.")
                     else:
                         print(f"Current MAE {scores['MAE']} more than best MAE {best_mae}")
-                    alpha_val, alpha_sigmoid = model.get_SE_alpha()
-                    
-                    print(f"[alpha_h] {alpha_val:.4f}\n [alpha_h sigmoid] {alpha_sigmoid:.4f}")
-
-                    with open(model_folder + "/output.txt", "a") as f:
-                        f.write(f"alpha_h = {alpha_val:.6f}\n")
-                        f.write(f"alpha_h sigmoid = {alpha_sigmoid:.6f}\n")
 
             # scheduler.step(running_loss['val'])
     finally:
         time_elapsed = time.perf_counter() - since
-        print(f"cost {time_elapsed} seconds")
-
+        hours, remainder = divmod(time_elapsed, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        # Print with seconds rounded to 2 decimal places
+        print(f"cost {int(hours)}h {int(minutes)}m {seconds:.2f}s")
+        
         save_model(f"{model_folder}/best_model.pkl", **save_dict)
         save_model(f"{model_folder}/final_model.pkl",
                    **{'state_dict': copy.deepcopy(model.state_dict()),
