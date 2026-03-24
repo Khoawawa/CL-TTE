@@ -36,16 +36,9 @@ class ReCo(nn.Module):
         # pairwise distance
         dist = torch.abs(y_all.unsqueeze(0) - y_all.unsqueeze(1))  # (2B, 2B)
         
-        upper_tri = dist[torch.triu_indices(dist.size(0), dist.size(1), offset=1)]
-        max_elements = 10_000_000
-        if upper_tri.numel() > max_elements:
-            step = upper_tri.numel() // max_elements
-            upper_tri = upper_tri[::step]
-        
+        r = 0.14
 
-        dynamic_r = torch.quantile(upper_tri.float(), r_percentile)
-
-        pos_mask = (dist <= dynamic_r).float()
+        pos_mask = (dist <= r).float()
 
         # remove self-pairs
         pos_mask.fill_diagonal_(0)
