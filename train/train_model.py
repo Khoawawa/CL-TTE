@@ -69,7 +69,7 @@ def train_model(model: nn.Module, data_loaders: Dict[str, DataLoader],
                         with torch.amp.autocast(args.device):
                             output, loss_cl = model(features,truth_data_log, args)       
                                  
-                            loss_eta = loss_func(truth=truth_data, predict=output)
+                            loss_eta = loss_func(truth=truth_data_log, predict=output)
                             
                             if phase == 'train':  
                                 loss = create_main_loss(loss_eta,loss_cl,args)
