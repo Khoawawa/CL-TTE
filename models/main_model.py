@@ -40,7 +40,7 @@ class Cl_TTE(nn.Module):
         # y_true: [B, 1] --> logged gt
         links = inputs['links']
         dateinfo = inputs['dateinfo']
-        lens = inputs['lens'].long()
+        lens = inputs['lens']
         max_len = torch.max(lens).item()
         segment_mask = torch.arange(max_len, device=lens.device).unsqueeze(0) < lens.unsqueeze(1)
         
@@ -49,7 +49,7 @@ class Cl_TTE(nn.Module):
             # CRITICAL: Force the inputs to float32 as they enter the disabled zone!
             h, l_cl = self.contrastive(
                 segment_rep.float(), 
-                lens, 
+                lens.long(), 
                 args.mask_prob, 
                 args.data_config['noise'], 
                 args.data_config['r_percentile'], 
