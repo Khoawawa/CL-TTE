@@ -53,7 +53,10 @@ class ReCo(nn.Module):
         return pos_mask
     
     def contrastive_loss(self, z, pos_mask, temperature=0.1):
-        # z: (2B, D) normalized
+        # 1. FORCE FLOAT32: Prevents underflow in exponential math
+        z = z.float()
+        pos_mask = pos_mask.float()
+
         sim = torch.matmul(z, z.T) / temperature  # (2B, 2B)
 
         # remove self similarity
@@ -63,8 +66,8 @@ class ReCo(nn.Module):
         sim = sim - sim.max(dim=1, keepdim=True)[0]
         exp_sim = torch.exp(sim) * logits_mask
 
-        # denominator: all except itself
-        denom = exp_sim.sum(dim=1, keepdim=True)  # (2B,1)
+        # 2. ADD EPSILON: Prevents division by absolute zero
+        denom = exp_sim.sum(dim=1, keepdim=True) + 1e-8  # (2B,1)
 
         # numerator: only positives
         num = (exp_sim * pos_mask).sum(dim=1)

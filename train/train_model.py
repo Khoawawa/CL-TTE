@@ -62,7 +62,7 @@ def train_model(model: nn.Module, data_loaders: Dict[str, DataLoader],
                     
                     features = to_var(features, args.device)
                     truth_data = to_var(truth_data, args.device)
-                    
+                    truth_data = torch.clamp(truth_data, min=0.0)
                     truth_data_log = torch.log1p(truth_data)
                     
                     with torch.set_grad_enabled(phase == 'train'):
