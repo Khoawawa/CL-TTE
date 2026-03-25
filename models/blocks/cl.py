@@ -42,7 +42,7 @@ class ReCo(nn.Module):
 
         num_pos = pos_mask.sum(dim=1)
         if (num_pos == 0).any():
-            dist_no_self = dist + torch.eye(dist.size(0), device=dist.device) * 1e9
+            dist_no_self = dist + torch.eye(dist.size(0), device=dist.device) * 1e4
             nn_idx = dist_no_self.argmin(dim=1)
             pos_mask[torch.arange(dist.size(0)), nn_idx] = 1.0
 
