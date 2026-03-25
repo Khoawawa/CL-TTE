@@ -18,7 +18,7 @@ class ReCo(nn.Module):
         # count valid tokens
         denom = mask.sum(dim=1, keepdim=True)  # (B, 1)
         # avoid division by zero
-        denom = denom.clamp(min=1e-6)
+        denom = denom.clamp(min=1e-4)
         return x_sum / denom
         
     def check_positive(self, y_true, r_percentile=0.2):
@@ -64,11 +64,11 @@ class ReCo(nn.Module):
 
         # 5. Fast PyTorch Masking (-1e9 completely removes them from logsumexp)
         # Denominator: All pairs EXCEPT self
-        sim_denom = sim.masked_fill(~logits_mask, -1e9)
+        sim_denom = sim.masked_fill(~logits_mask, -1e4)
         log_denom = torch.logsumexp(sim_denom, dim=1)
 
         # Numerator: ONLY positive pairs
-        sim_num = sim.masked_fill(~pos_mask_bool, -1e9)
+        sim_num = sim.masked_fill(~pos_mask_bool, -1e4)
         log_num = torch.logsumexp(sim_num, dim=1)
 
         # 6. Loss
