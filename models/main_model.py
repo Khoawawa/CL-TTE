@@ -45,8 +45,17 @@ class Cl_TTE(nn.Module):
         segment_mask = torch.arange(max_len, device=lens.device).unsqueeze(0) < lens.unsqueeze(1)
         
         segment_rep, datetimerep = self.segment_encoder(links,dateinfo,lens)  # (B, T, D)
+        with torch.amp.autocast(device_type="cuda" if segment_rep.is_cuda else "cpu", enabled=False):
+            # CRITICAL: Force the inputs to float32 as they enter the disabled zone!
+            h, l_cl = self.contrastive(
+                segment_rep.float(), 
+                lens, 
+                args.mask_prob, 
+                args.data_config['noise'], 
+                args.data_config['r_percentile'], 
+                y_true.float() if y_true is not None else None
+            )
         
-        h, l_cl = self.contrastive(segment_rep, lens,args.mask_prob, args.data_config['noise'], args.data_config['r_percentile'], y_true) # (B, T, D)
         gate = torch.sigmoid(self.alpha_h)
         
         h = segment_rep + gate * h
