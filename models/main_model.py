@@ -55,8 +55,8 @@ class Cl_TTE(nn.Module):
         h,_ = self.temporal_block(h, lens) # (B, T, D)
         
         d = h.transpose(0,1).contiguous()
-        with torch.amp.autocast(device_type="cuda" if h.is_cuda else "cpu", enabled=False):
-            d = self.decoder(h.float(), inputs['lens'].long())
+        # with torch.amp.autocast(device_type="cuda" if h.is_cuda else "cpu", enabled=False):
+        #     d = self.decoder(h.float(), inputs['lens'].long())
         
         
         z =  (d * segment_mask.unsqueeze(-1)).sum(dim=1) # (B, D)
