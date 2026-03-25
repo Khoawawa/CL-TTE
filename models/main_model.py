@@ -20,9 +20,9 @@ class Cl_TTE(nn.Module):
         self.post_norm = nn.LayerNorm(d_model)
         self.temporal_block = LayerNormGRU(input_dim=d_model, hidden_dim=d_model, num_layers=seq_layer)
         
-        # decoder_head = 1
+        decoder_head = 1
         
-        # self.decoder = Decoder(d_model=d_model, N=decoder_layer, heads=decoder_head)
+        self.decoder = Decoder(d_model=d_model, N=decoder_layer, heads=decoder_head)
         
         mlp_in_dim = d_model + self.segment_encoder.datetime_dim
         self.regression_mlp = nn.Sequential(
@@ -64,8 +64,8 @@ class Cl_TTE(nn.Module):
         h,_ = self.temporal_block(h, lens) # (B, T, D)
         
         d = h.transpose(0,1).contiguous()
-        # with torch.amp.autocast(device_type="cuda" if h.is_cuda else "cpu", enabled=False):
-        #     d = self.decoder(h.float(), inputs['lens'].long())
+        with torch.amp.autocast(device_type="cuda" if h.is_cuda else "cpu", enabled=False):
+            d = self.decoder(h.float(), inputs['lens'].long())
         
         
         z =  (d * segment_mask.unsqueeze(-1)).sum(dim=1) # (B, D)
