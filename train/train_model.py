@@ -80,7 +80,7 @@ def train_model(model: nn.Module, data_loaders: Dict[str, DataLoader],
                             optimizer.zero_grad()
                             scaler.scale(loss).backward()
                             scaler.unscale_(optimizer)
-                            torch.nn.utils.clip_grad.clip_grad_norm_(model.parameters(), 10.0)
+                            torch.nn.utils.clip_grad.clip_grad_norm_(model.parameters(), 1.0)
                             scaler.step(optimizer)
                             scaler.update()
                     if phase == 'train':       
@@ -92,7 +92,15 @@ def train_model(model: nn.Module, data_loaders: Dict[str, DataLoader],
                         + desc
                     )
                     with torch.no_grad():
-                        predictions.append(torch.expm1(output.detach().cpu()))
+                        raw_out = output.detach().cpu()
+                        
+                        # 2. Clamp the max to 80.0. 
+                        # exp(80) is ~5.5e34, which safely fits in float32.
+                        # (A log-time of 80 seconds is practically infinite travel time anyway!)
+                        safe_out = torch.clamp(raw_out, max=80.0)
+                        
+                        # 3. Exponentiate safely
+                        predictions.append(torch.expm1(safe_out))
                         targets.append(truth_data.detach().cpu())
 
                     running_loss[phase] += loss.item() * truth_data.size(0)
