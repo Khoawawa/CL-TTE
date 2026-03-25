@@ -8,50 +8,69 @@ from models.blocks.cl import MSM, ReCo
 class ContrastiveEncoder(nn.Module):
     def __init__(self, d_model, nhead, dropout=0.1, nlayer=4):
         super().__init__()
-        self.reco = ReCo(d_model,nhead,dropout,nlayer)
+        self.reco = ReCo(d_model, nhead, dropout, nlayer)
         self.pad_token = nn.Parameter(torch.zeros(1, 1, d_model))
         
     def apply_token_mask(self, x, lens, mask_prob=0.15):
         B, T, D = x.shape
         device = x.device
 
+        # Only apply masks to valid tokens (ignore padding)
         valid_mask = torch.arange(T, device=device).unsqueeze(0) < lens.unsqueeze(1)
         rand = torch.rand(B, T, device=device)
 
+        # 1. Select tokens to mask
         mask = (rand < mask_prob) & valid_mask
 
         # split into 80/10/10
         rand2 = torch.rand(B, T, device=device)
-
         mask_token = self.pad_token.expand(B, T, -1).to(dtype=x.dtype)
-
         x_masked = x.clone()
 
         # 80% → mask token
         mask_token_mask = mask & (rand2 < 0.8)
         x_masked[mask_token_mask] = mask_token[mask_token_mask]
 
-        # 10% → random token
+        # 10% → random token (FIXED: Only sample from valid indices)
         random_mask = mask & (rand2 >= 0.8) & (rand2 < 0.9)
-        random_indices = torch.randint(0, T, (B, T), device=device)
+        
+        # Create a tensor of valid random indices per batch
+        random_indices = torch.zeros((B, T), dtype=torch.long, device=device)
+        for i in range(B):
+            # Pick random indices strictly from 0 to lens[i]-1
+            random_indices[i] = torch.randint(0, int(lens[i].item()), (T,), device=device)
+            
         batch_idx = torch.arange(B, device=device).unsqueeze(1).expand(B, T)
         x_masked[random_mask] = x[batch_idx[random_mask], random_indices[random_mask]]
+        
         # 10% → unchanged (do nothing)
 
         return x_masked, mask
     
-    def forward(self, x, lens, mask_prob, noise,r,y_true=None):
+    def forward(self, x, lens, mask_prob, noise, r, y_true=None):
         B, T, D = x.shape
         device = x.device
         
         src_padding_mask = torch.arange(T, device=device).unsqueeze(0) >= lens.unsqueeze(1)  # (B, T)
         
-        x_aug, _ = self.apply_token_mask(x, lens,mask_prob)
-        x_aug = x_aug + torch.randn_like(x_aug) * noise
+        # 1. Apply Masking
+        x_aug, _ = self.apply_token_mask(x, lens, mask_prob)
         
-        z, l_cl = self.reco(x,x_aug,r,src_padding_mask,y_true)
+        # 2. Apply Dynamic Noise (Scaled by the batch's standard deviation)
+        # This guarantees the noise is always impactful regardless of the embedding scale
+        x_std = torch.std(x, dim=(0, 1), keepdim=True) # (1, 1, D)
+        # Add noise scaled by the standard deviation. 
+        # If args.noise is 0.1, we add noise equal to 10% of the feature's std dev.
+        scaled_noise = torch.randn_like(x_aug) * (x_std * noise) 
         
-        return z, l_cl
+        # Only add noise to valid tokens, leave padding at 0
+        valid_mask_unsqueeze = (~src_padding_mask).unsqueeze(-1).float()
+        x_aug = x_aug + (scaled_noise * valid_mask_unsqueeze)
+        
+        # 3. Contrastive Learning
+        h, l_cl = self.reco(x, x_aug, r, src_padding_mask, y_true)
+        
+        return h, l_cl
     
 class SegmentEncoder(nn.Module):
     def __init__(self, d_model=128):

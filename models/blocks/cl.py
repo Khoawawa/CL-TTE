@@ -52,7 +52,7 @@ class ReCo(nn.Module):
 
         return pos_mask
     
-    def contrastive_loss(self, z, pos_mask, temperature=0.05):
+    def contrastive_loss(self, z, pos_mask, temperature=0.1):
         # z: (2B, D) normalized
         sim = torch.matmul(z, z.T) / temperature  # (2B, 2B)
 
