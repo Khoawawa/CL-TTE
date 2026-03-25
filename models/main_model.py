@@ -20,9 +20,9 @@ class Cl_TTE(nn.Module):
         self.post_norm = nn.LayerNorm(d_model)
         self.temporal_block = LayerNormGRU(input_dim=d_model, hidden_dim=d_model, num_layers=seq_layer)
         
-        decoder_head = 1
+        # decoder_head = 1
         
-        self.decoder = Decoder(d_model=d_model, N=decoder_layer, heads=decoder_head)
+        # self.decoder = Decoder(d_model=d_model, N=decoder_layer, heads=decoder_head)
         
         mlp_in_dim = d_model + self.segment_encoder.datetime_dim
         self.regression_mlp = nn.Sequential(
