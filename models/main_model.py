@@ -7,16 +7,17 @@ import copy
 class Cl_TTE(nn.Module):
     def __init__(self, d_model, nhead, nlayer, seq_layer,decoder_layer):
         super().__init__()
-        
+        self.d_model = d_model
         self.segment_encoder = SegmentEncoder(
             d_model= d_model
         )
-        
+        self.alpha_h = nn.Parameter(torch.tensor(0.2))
         self.contrastive = ContrastiveEncoder(
             d_model=d_model,
             nhead=nhead,
             nlayer=nlayer
         )
+        self.post_norm = nn.LayerNorm(d_model)
         self.temporal_block = LayerNormGRU(input_dim=d_model, hidden_dim=d_model, num_layers=seq_layer)
         
         decoder_head = 1
@@ -25,7 +26,6 @@ class Cl_TTE(nn.Module):
         
         mlp_in_dim = d_model + self.segment_encoder.datetime_dim
         self.regression_mlp = nn.Sequential(
-            nn.LayerNorm(mlp_in_dim),
             nn.Linear(mlp_in_dim, mlp_in_dim//2),
             nn.LeakyReLU(),
             nn.Linear(mlp_in_dim//2, 1)
@@ -47,6 +47,9 @@ class Cl_TTE(nn.Module):
         segment_rep, datetimerep = self.segment_encoder(links,dateinfo,lens)  # (B, T, D)
         
         h, l_cl = self.contrastive(segment_rep, lens,args.mask_prob, args.data_config['noise'], args.data_config['r_percentile'], y_true) # (B, T, D)
+        gate = torch.sigmoid(self.alpha_h)
+        
+        h = segment_rep + gate * h
         
         h = h.transpose(0,1).contiguous() # (T, B, D)
         h,_ = self.temporal_block(h, lens) # (B, T, D)

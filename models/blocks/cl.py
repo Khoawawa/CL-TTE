@@ -29,15 +29,22 @@ class ReCo(nn.Module):
         if y_true.dim() == 2:
             y_true = y_true.squeeze(-1)
 
-        # duplicate for 2 views
         y_true = y_true.detach()
+
+        # duplicate for 2 views
         y_all = torch.cat([y_true, y_true], dim=0)  # (2B,)
 
-        # pairwise distance
+        # pairwise absolute distance
         dist = torch.abs(y_all.unsqueeze(0) - y_all.unsqueeze(1))  # (2B, 2B)
-        
-        r = 0.14
 
+        # remove diagonal for percentile computation
+        mask = ~torch.eye(dist.size(0), dtype=torch.bool, device=dist.device)
+        dist_flat = dist[mask]
+
+        # compute dynamic radius
+        r = torch.quantile(dist_flat, r_percentile)
+
+        # positive mask
         pos_mask = (dist <= r).float()
 
         # remove self-pairs
