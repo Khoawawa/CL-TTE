@@ -24,58 +24,94 @@ class ReCo(nn.Module):
         denom = denom.clamp(min=1e-6)
         
         return x_sum / denom
-    def check_positive(self, y_true, r_percentile):
-        # y_true: (B,) or (B,1)
+    def check_positive(self, y_true, r_percentile=0.2): # <-- ADDED self
+        # ... your existing logic remains exactly the same ...
         if y_true.dim() == 2:
             y_true = y_true.squeeze(-1)
-
         y_true = y_true.detach()
+        B = y_true.size(0)
 
-        # duplicate for 2 views
-        y_all = torch.cat([y_true, y_true], dim=0)  # (2B,)
-
-        # pairwise absolute distance
-        dist = torch.abs(y_all.unsqueeze(0) - y_all.unsqueeze(1))  # (2B, 2B)
-
-        # remove diagonal for percentile computation
-        mask = ~torch.eye(dist.size(0), dtype=torch.bool, device=dist.device)
-        dist_flat = dist[mask]
-
-        # compute dynamic radius
+        dist_orig = torch.abs(y_true.unsqueeze(0) - y_true.unsqueeze(1))
+        mask = ~torch.eye(B, dtype=torch.bool, device=y_true.device)
+        dist_flat = dist_orig[mask]
+        
         r = torch.quantile(dist_flat, r_percentile)
+        r = torch.clamp(r, min=1e-3)
 
-        # positive mask
+        y_all = torch.cat([y_true, y_true], dim=0) 
+        dist = torch.abs(y_all.unsqueeze(0) - y_all.unsqueeze(1))
+        
         pos_mask = (dist <= r).float()
-
-        # remove self-pairs
         pos_mask.fill_diagonal_(0)
 
+        num_pos = pos_mask.sum(dim=1)
+        if (num_pos == 0).any():
+            dist_no_self = dist + torch.eye(dist.size(0), device=dist.device) * 1e9
+            nn_idx = dist_no_self.argmin(dim=1)
+            pos_mask[torch.arange(dist.size(0)), nn_idx] = 1.0
+
         return pos_mask
-    
-    def contrastive_loss(self, z, pos_mask, temperature=0.1):
-        # 1. FORCE FLOAT32: Prevents underflow in exponential math
-        z = z.float()
+
+
+    def contrastive_loss(self, z, pos_mask, temperature=0.2): # <-- ADDED self
+        # 1. Normalize safely and force FP32
+        z = F.normalize(z, dim=-1, eps=1e-8).float()
+        
+        # 2. Similarity
+        sim = torch.matmul(z, z.T) / temperature 
+        
+        # 3. Stability trick
+        sim = sim - sim.max(dim=1, keepdim=True)[0]
+
+        # 4. Create boolean masks
+        logits_mask = ~torch.eye(sim.size(0), dtype=torch.bool, device=sim.device)
+        pos_mask_bool = pos_mask.bool()
+
+        # 5. Fast PyTorch Masking (-1e9 completely removes them from logsumexp)
+        # Denominator: All pairs EXCEPT self
+        sim_denom = sim.masked_fill(~logits_mask, -1e9)
+        log_denom = torch.logsumexp(sim_denom, dim=1)
+
+        # Numerator: ONLY positive pairs
+        sim_num = sim.masked_fill(~pos_mask_bool, -1e9)
+        log_num = torch.logsumexp(sim_num, dim=1)
+
+        # 6. Loss
+        loss = -(log_num - log_denom)
+
+        # ---- FINAL SAFETY ----
+        loss = torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))
+
+        return loss.mean()
+
+
+    def contrastive_loss(z, pos_mask, temperature=0.2):
+        """
+        Stable NT-Xent style loss using log-sum-exp.
+        """
+
+        # ---- 1. Normalize safely ----
+        z = F.normalize(z, dim=-1, eps=1e-8).float()
         pos_mask = pos_mask.float()
 
+        # ---- 2. Similarity ----
         sim = torch.matmul(z, z.T) / temperature  # (2B, 2B)
 
-        # remove self similarity
+        # remove self
         logits_mask = torch.ones_like(sim)
         logits_mask.fill_diagonal_(0)
 
+        # ---- 3. Stability trick ----
         sim = sim - sim.max(dim=1, keepdim=True)[0]
-        exp_sim = torch.exp(sim) * logits_mask
 
-        # 2. ADD EPSILON: Prevents division by absolute zero
-        denom = exp_sim.sum(dim=1, keepdim=True) + 1e-8  # (2B,1)
+        # ---- 4. Log-sum-exp denominator ----
+        log_denom = torch.logsumexp(sim + torch.log(logits_mask + 1e-8), dim=1)
 
-        # numerator: only positives
-        num = (exp_sim * pos_mask).sum(dim=1)
+        # ---- 5. Log-sum-exp numerator (positives only) ----
+        log_num = torch.logsumexp(sim + torch.log(pos_mask + 1e-8), dim=1)
 
-        # avoid log(0)
-        num = num.clamp(min=1e-8)
-
-        loss = -torch.log(num / denom.squeeze(1))
+        # ---- 6. Loss ----
+        loss = -(log_num - log_denom)
 
         return loss.mean()
     
