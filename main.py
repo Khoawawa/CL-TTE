@@ -18,7 +18,7 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--optim', type=str, help='input the chosen optimization function', default="Adam", choices=['Adam','AdamW'])
     parser.add_argument('-E', '--epoch_cycle', type=int, help='input the epoch cycle for discriminator training', default=1)
     parser.add_argument('-c', '--loss', type=str, help='input the chosen loss function', default="smoothL1", choices=['rmse','mse', 'mape', 'mae', 'smoothL1'])
-    parser.add_argument('-cl', '--loss_val', type=float, help='intput the specific parameter for smoothL1',  default=1.0)
+    parser.add_argument('-cl', '--loss_val', type=float, help='intput the specific parameter for smoothL1',  default=300.0)
     parser.add_argument('-e', '--epochs', type=int, help='input the max epochs',default=50)
     parser.add_argument('-b', '--beta', type=float, help='intput the learning preference between MSG and TTE (the bigger the value, the more preference for TTE.)',default=0.7)
     parser.add_argument('-l', '--lr', type=float, help='intput the initial learning rate',default=0.001)
