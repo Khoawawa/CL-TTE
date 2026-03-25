@@ -54,9 +54,10 @@ class Cl_TTE(nn.Module):
         h = h.transpose(0,1).contiguous() # (T, B, D)
         h,_ = self.temporal_block(h, lens) # (B, T, D)
         
+        d = h.transpose(0,1).contiguous()
         with torch.amp.autocast(device_type="cuda" if h.is_cuda else "cpu", enabled=False):
             d = self.decoder(h.float(), inputs['lens'].long())
-        d = d.transpose(0,1).contiguous()
+        
         
         z =  (d * segment_mask.unsqueeze(-1)).sum(dim=1) # (B, D)
         
@@ -73,7 +74,7 @@ class MultiHeadAttention(nn.Module):
     def __init__(self, heads, d_model, dropout=0.1):
         super().__init__()
         self.h = heads
-        self.attn_1 = nn.MultiheadAttention(embed_dim=d_model,kdim=d_model,vdim=d_model, dropout=dropout, num_heads=self.h)
+        self.attn_1 = nn.MultiheadAttention(embed_dim=d_model,kdim=d_model,vdim=d_model, dropout=dropout, num_heads=self.h,batch_first=True)
 
     def forward(self, q, k, v, len):
         # perform linear operation and split into N heads
