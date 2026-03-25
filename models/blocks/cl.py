@@ -3,29 +3,25 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models.base.PositionalEncoding import PositionalEncodingIndex
 from models.blocks.moco import MoCo
+
 class ReCo(nn.Module):
     def __init__(self,d_model,nhead,dropout=0.1,nlayer=4):
         super().__init__()
         self.msm = MSM(d_model,nhead,dropout,nlayer)
+        
     def masked_mean_pooling(self, x, mask):
         # x: (B, T, D)
         # mask: (B, T) with 1 = valid, 0 = padding
-        
         mask = mask.float()
-        
-
         # sum
         x_sum = torch.einsum('btd,bt->bd', x, mask)
-        
         # count valid tokens
         denom = mask.sum(dim=1, keepdim=True)  # (B, 1)
-        
         # avoid division by zero
         denom = denom.clamp(min=1e-6)
-        
         return x_sum / denom
-    def check_positive(self, y_true, r_percentile=0.2): # <-- ADDED self
-        # ... your existing logic remains exactly the same ...
+        
+    def check_positive(self, y_true, r_percentile=0.2):
         if y_true.dim() == 2:
             y_true = y_true.squeeze(-1)
         y_true = y_true.detach()
@@ -52,8 +48,7 @@ class ReCo(nn.Module):
 
         return pos_mask
 
-
-    def contrastive_loss(self, z, pos_mask, temperature=0.2): # <-- ADDED self
+    def contrastive_loss(self, z, pos_mask, temperature=0.2):
         # 1. Normalize safely and force FP32
         z = F.normalize(z, dim=-1, eps=1e-8).float()
         
@@ -83,37 +78,6 @@ class ReCo(nn.Module):
         loss = torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))
 
         return loss.mean()
-
-
-    def contrastive_loss(z, pos_mask, temperature=0.2):
-        """
-        Stable NT-Xent style loss using log-sum-exp.
-        """
-
-        # ---- 1. Normalize safely ----
-        z = F.normalize(z, dim=-1, eps=1e-8).float()
-        pos_mask = pos_mask.float()
-
-        # ---- 2. Similarity ----
-        sim = torch.matmul(z, z.T) / temperature  # (2B, 2B)
-
-        # remove self
-        logits_mask = torch.ones_like(sim)
-        logits_mask.fill_diagonal_(0)
-
-        # ---- 3. Stability trick ----
-        sim = sim - sim.max(dim=1, keepdim=True)[0]
-
-        # ---- 4. Log-sum-exp denominator ----
-        log_denom = torch.logsumexp(sim + torch.log(logits_mask + 1e-8), dim=1)
-
-        # ---- 5. Log-sum-exp numerator (positives only) ----
-        log_num = torch.logsumexp(sim + torch.log(pos_mask + 1e-8), dim=1)
-
-        # ---- 6. Loss ----
-        loss = -(log_num - log_denom)
-
-        return loss.mean()
     
     def forward(self,x,x_aug,r_percentile,src_key_padding_mask=None,y_true=None):
         # x: (B, T, D)
@@ -125,20 +89,18 @@ class ReCo(nn.Module):
         
         z = self.masked_mean_pooling(h,valid_mask) # (B, D)
         z_aug = self.masked_mean_pooling(h_aug,valid_mask) # (B, D)
-
-        z = F.normalize(z, dim=-1)
-        z_aug = F.normalize(z_aug, dim=-1)
         
+        # F.normalize is now handled safely inside contrastive_loss!
         z_all = torch.cat([z,z_aug],dim=0) # (2B, D)
+        
         if y_true is None:
             l_cl = None
         else:
             pos_mask = self.check_positive(y_true,r_percentile)
-            
             l_cl = self.contrastive_loss(z_all,pos_mask)
          
         return h, l_cl
-        
+    
 class MSM(nn.Module):
     def __init__(self, d_model,nhead, dropout=0.1, nlayer=4):
         super().__init__()
