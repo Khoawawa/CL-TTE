@@ -106,7 +106,7 @@ class Cl_TTE(nn.Module):
         max_len = torch.max(lens).item()
         segment_mask = torch.arange(max_len, device=lens.device).unsqueeze(0) < lens.unsqueeze(1)
         
-        segment_rep, datetimerep = self.enc(links,dateinfo,lens)  # (B, T, D)
+        segment_rep, datetimerep = self.enc(links,dateinfo)  # (B, T, D)
         
         h = segment_rep.transpose(0,1).contiguous() # (T, B, D)
         h,_ = self.temporal_block(h, lens) # (T, B, 2D)
