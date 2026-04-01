@@ -4,68 +4,51 @@ import torch.nn.functional as F
 import math
 
 
-class LayerNormGRUCell(torch.nn.Module):
-    def __init__(self, input_size, hidden_size, bias=True):
-        super(LayerNormGRUCell, self).__init__()
-
-        self.ln_i2h = torch.nn.LayerNorm(2*hidden_size, elementwise_affine=False)
-        self.ln_h2h = torch.nn.LayerNorm(2*hidden_size, elementwise_affine=False)
-        self.ln_cell_1 = torch.nn.LayerNorm(hidden_size, elementwise_affine=False)
-        self.ln_cell_2 = torch.nn.LayerNorm(hidden_size, elementwise_affine=False)
-
-        self.i2h = torch.nn.Linear(input_size, 2 * hidden_size, bias=bias)
-        self.h2h = torch.nn.Linear(hidden_size, 2 * hidden_size, bias=bias)
-        self.h_hat_W = torch.nn.Linear(input_size, hidden_size, bias=bias)
-        self.h_hat_U = torch.nn.Linear(hidden_size, hidden_size, bias=bias)
+class LayerNormBiGRUCell(torch.nn.Module):
+    def __init__(self, hidden_size, bias=True):
+        super().__init__()
+        
         self.hidden_size = hidden_size
+        
+        self.h2h = nn.Sequential(
+            nn.Linear(hidden_size, 2 * hidden_size, bias=bias),
+            nn.LayerNorm(2 * hidden_size, elementwise_affine=False)
+        )
+        
+        self.ln_cell_2 = torch.nn.LayerNorm(hidden_size, elementwise_affine=False)
+        self.h_hat_U = torch.nn.Linear(hidden_size, hidden_size, bias=bias)
+        
         self.reset_parameters()
 
     def reset_parameters(self):
-        std = 1.0 / math.sqrt(self.hidden_size)
-        for w in self.parameters():
-            w.data.uniform_(-std, std)
+        for name, param in self.named_parameters():
+            if "weight" in name:
+                nn.init.xavier_uniform_(param)
+            elif "bias" in name:
+                nn.init.zeros_(param)
 
-    def forward(self, x, h):
+    def forward(self, pre_i2h, pre_h_hat, h):
 
-        h = h.view(h.size(0), -1)
-        x = x.view(x.size(0), -1)
-
-        # Linear mappings
-        i2h = self.i2h(x)
         h2h = self.h2h(h)
-
-        # Layer norm
-        i2h = self.ln_i2h(i2h)
-        h2h = self.ln_h2h(h2h)
-
-        preact = i2h + h2h
+        preact = pre_i2h + h2h
 
         # activations
-        gates = preact[:, :].sigmoid()
+        gates = preact.sigmoid()
         z_t = gates[:, :self.hidden_size]
         r_t = gates[:, -self.hidden_size:]
 
         # h_hat
-        h_hat_first_half = self.h_hat_W(x)
-        h_hat_last_half = self.h_hat_U(h)
-
-        # layer norm
-        h_hat_first_half = self.ln_cell_1( h_hat_first_half )
-        h_hat_last_half = self.ln_cell_2( h_hat_last_half )
-
-        h_hat = torch.tanh(  h_hat_first_half + torch.mul(r_t,   h_hat_last_half ) )
-
-        h_t = torch.mul( 1-z_t , h ) + torch.mul( z_t, h_hat)
-
-        # Reshape for compatibility
-
-        h_t = h_t.view( h_t.size(0), -1)
-        return h_t
+        h_hat_last_half = self.ln_cell_2(self.h_hat_U(h))
+        h_hat = torch.tanh(pre_h_hat + torch.mul(r_t, h_hat_last_half))
+        
+        h_t = torch.mul(1 - z_t, h) + torch.mul(z_t, h_hat)
+        
+        return h_t # [batch_size, hidden_size]
 
 
-class LayerNormGRU(nn.Module):
+class LayerNormBiGRU(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_layers = 2, bias=True):
-        super(LayerNormGRU, self).__init__()
+        super().__init__()
 
         self.input_dim = input_dim
         # Hidden dimensions
@@ -73,83 +56,103 @@ class LayerNormGRU(nn.Module):
 
         # Number of hidden layers
         self.num_layers = num_layers
+        
+        self.forward_cells = nn.ModuleList()
+        self.backward_cells = nn.ModuleList()
+        
+        self.i2h_fwd = nn.ModuleList()
+        self.h_hat_W_fwd = nn.ModuleList()
+        self.ln_i2h_fwd = nn.ModuleList()
+        self.ln_cell_1_fwd = nn.ModuleList()
+        
+        self.i2h_bwd = nn.ModuleList()
+        self.h_hat_W_bwd = nn.ModuleList()
+        self.ln_i2h_bwd = nn.ModuleList()
+        self.ln_cell_1_bwd = nn.ModuleList()
+        
+        for layer in range(num_layers):
+            # Input dimension is `input_dim` for layer 0, and `2 * hidden_dim` for subsequent layers
+            layer_in_dim = input_dim if layer == 0 else 2 * hidden_dim
 
-        self.hidden0 = nn.ModuleList([
-            LayerNormGRUCell(input_size=(input_dim if layer == 0 else hidden_dim), hidden_size=hidden_dim, bias=bias)
-            for layer in range(num_layers)
-        ])
+            # Setup Forward Components
+            self.forward_cells.append(LayerNormBiGRUCell(hidden_dim, bias=bias))
+            self.i2h_fwd.append(nn.Linear(layer_in_dim, 2 * hidden_dim, bias=bias))
+            self.h_hat_W_fwd.append(nn.Linear(layer_in_dim, hidden_dim, bias=bias))
+            self.ln_i2h_fwd.append(nn.LayerNorm(2 * hidden_dim, elementwise_affine=False))
+            self.ln_cell_1_fwd.append(nn.LayerNorm(hidden_dim, elementwise_affine=False))
+
+            # Setup Backward Components
+            self.backward_cells.append(LayerNormBiGRUCell(hidden_dim, bias=bias))
+            self.i2h_bwd.append(nn.Linear(layer_in_dim, 2 * hidden_dim, bias=bias))
+            self.h_hat_W_bwd.append(nn.Linear(layer_in_dim, hidden_dim, bias=bias))
+            self.ln_i2h_bwd.append(nn.LayerNorm(2 * hidden_dim, elementwise_affine=False))
+            self.ln_cell_1_bwd.append(nn.LayerNorm(hidden_dim, elementwise_affine=False))
 
 
     def forward(self, input: torch.Tensor, seq_lens=None):
+        
+        L, B, _ = input.size()
         device = input.device
-        seq_lens = seq_lens.to(device).long() if seq_lens is not None else None
-        seq_len, batch_size, _ = input.size()
-        # print("input:", input.shape)
-        hx = input.new_zeros(self.num_layers, batch_size, self.hidden_dim, requires_grad=False)
-        # print("hx:", hx.shape)
-        ht = []
-        for i in range(seq_len):
-            ht.append([None] * (self.num_layers))
+        
+        if seq_lens is None:
+            seq_lens = torch.full((B,), L, dtype=torch.long, device=device)
+        else:
+            seq_lens = seq_lens.to(device).long()
+        
+        mask = (torch.arange(L, device=device).unsqueeze(0) < seq_lens.unsqueeze(1)).transpose(0, 1)  # L,B
+        mask = mask.unsqueeze(-1).float()
+        
+        layer_input = input
+        all_hy_fwd = []
+        all_hy_bwd = []
+        
+        batch_indices = torch.arange(B, device=device)
+        
+        for l in range(self.num_layers):
+            seq_i2h_fwd = self.ln_i2h_fwd[l](self.i2h_fwd[l](layer_input))
+            seq_h_hat_fwd = self.ln_cell_1_fwd[l](self.h_hat_W_fwd[l](layer_input))
 
-        seq_len_mask = input.new_ones(batch_size, seq_len, self.hidden_dim, requires_grad=False)
-        if seq_lens != None:
-            for i, l in enumerate(seq_lens):
-                seq_len_mask[i, l:, :] = 0
-        seq_len_mask = seq_len_mask.transpose(0, 1)
+            seq_i2h_bwd = self.ln_i2h_bwd[l](self.i2h_bwd[l](layer_input))
+            seq_h_hat_bwd = self.ln_cell_1_bwd[l](self.h_hat_W_bwd[l](layer_input))
+            
+            h_fwd = torch.zeros(B, self.hidden_dim, device=device)
+            h_bwd = torch.zeros(B, self.hidden_dim, device=device)
+            
+            fwd_outputs = []
+            bwd_outputs = [None] * L
+            
+            for t in range(L):
+                m_t = mask[t]
+                h_new  = self.forward_cells[l](seq_i2h_fwd[t], seq_h_hat_fwd[t], h_fwd)
+                h_fwd = h_new * m_t + h_fwd * (1 - m_t) # Apply padding mask
+                fwd_outputs.append(h_fwd)
+            
+            for t in reversed(range(L)):
+                m_t = mask[t]
+                h_new = self.backward_cells[l](seq_i2h_bwd[t], seq_h_hat_bwd[t], h_bwd)
+                h_bwd = h_new * m_t + h_bwd * (1 - m_t) # Keeps state at 0 until first valid token is hit from right
+                bwd_outputs[t] = h_bwd
+            fwd_outputs = torch.stack(fwd_outputs)
+            bwd_outputs = torch.stack(bwd_outputs)
+            layer_input = torch.cat([fwd_outputs, bwd_outputs], dim=-1)
+            
+            last_fwd = fwd_outputs[seq_lens - 1, batch_indices, :]
+            all_hy_fwd.append(last_fwd)
 
-        indices = (seq_lens - 1).unsqueeze(1).unsqueeze(0).unsqueeze(0).repeat(
-            [1, self.num_layers, 1, self.hidden_dim])
-        h = hx
+            last_bwd = bwd_outputs[0, batch_indices, :] # Backward always ends at index 0
+            all_hy_bwd.append(last_bwd)
+            
+        y = layer_input 
 
-        for t, x in enumerate(input):
-            for l, layer in enumerate(self.hidden0):
-                ht_= layer(x, h[l])
-                ht[t][l] = ht_ * seq_len_mask[t]
-                x = ht[t][l]
-            ht[t] = torch.stack(ht[t])
-            h = ht[t]
-        y = torch.stack([h[-1] for h in ht])
-        # print("\ny:", y.shape)
-        hy = torch.stack(list(torch.stack(ht).gather(dim=0, index=indices).squeeze(0)))
+        # Format final hidden states `hy` to match nn.GRU output: 
+        # (2 * num_layers, batch_size, hidden_dim) -> [fwd_L0, bwd_L0, fwd_L1, bwd_L1, ...]
+        hy = []
+        for l in range(self.num_layers):
+            hy.append(all_hy_fwd[l])
+            hy.append(all_hy_bwd[l])
+        hy = torch.stack(hy)
 
         return y, hy
-        # seq_len, batch_size, _ = input.size()
-        # # hidden
-        # h0 = input.new_zeros(self.num_layers, batch_size, self.hidden_size, requires_grad=False)
-        #
-        # outs = []
-        #
-        # hn_1 = h0[0, :, :]
-        # hn_2 = h0[1, :, :]
-        #
-        # for seq in range(seq_len):
-        #     hn_1 = self.gru_cell_1(input[seq, :, :], hn_1)
-        #     hn_2 = self.gru_cell_2(hn_1, hn_2)
-        #     outs.append(hn_2)
-        #
-        # out = outs[-1].squeeze()
-        # return out
-        # # Initialize hidden state with zeros
-        # #######################
-        # #  USE GPU FOR MODEL  #
-        # #######################
-        # # print(x.shape,"x.shape")100, 28, 28
-        # if torch.cuda.is_available():
-        #     h0 = Variable(torch.zeros(self.layer_dim, x.size(0), self.hidden_dim).cuda())
-        # else:
-        #     h0 = Variable(torch.zeros(self.layer_dim, x.size(0), self.hidden_dim))
-        #
-        # outs = []
-        #
-        # hn = h0[0, :, :]
-        #
-        # for seq in range(x.size(1)):
-        #     hn = self.grus(x[:, seq, :], hn)
-        #     outs.append(hn)
-        #
-        # out = outs[-1].squeeze()
-        #
-        # return out
 
 '''
 test the module

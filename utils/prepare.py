@@ -10,63 +10,105 @@ from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 from utils.util import StandardScaler2
 from models.main_model import Cl_TTE
+import ast
+highway = {'<PAD>': 0, 'unclassified': 1, 'busway': 2, 'crossing': 3, 'living_street': 4, 'motorway': 5, 'motorway_link': 6, 'primary': 7, 'primary_link': 8, 'residential': 9, 'road': 10, 'secondary': 11, 'secondary_link': 12, 'tertiary': 13, 'tertiary_link': 14, 'trunk': 15, 'trunk_link': 16}
+def parse_highway_tags(raw_val, max_tags=2):
+    """Converts OSM strings/lists to a fixed-size list of IDs."""
+    UNCLASSIFIED_ID = highway.get('unclassified', 1)
+    
+    # 1. Handle string/list input
+    if isinstance(raw_val, str) and raw_val.startswith("["):
+        try: tags = ast.literal_eval(raw_val)
+        except: tags = [raw_val]
+    elif isinstance(raw_val, list):
+        tags = raw_val
+    else:
+        tags = [raw_val]
 
-highway = {'living_street':1, 'morotway':2, 'motorway_link':3, 'plannned':4, 'trunk':5, "secondary":6, "trunk_link":7, "tertiary_link":8, "primary":9, "residential":10, "primary_link":11, "unclassified":12, "tertiary":13, "secondary_link":14}
+    # 2. Map to IDs with fallback
+    ids = [highway.get(t, UNCLASSIFIED_ID) for t in tags]
+    
+    # 3. Pad with 0 (Reserved for 'No Tag')
+    while len(ids) < max_tags:
+        ids.append(0)
+    return ids[:max_tags]
+
 node_type = {'turning_circle':1, 'traffic_signals':2, 'crossing':3, 'motorway_junction':4, "mini_roundabout":5}
 
 def collate_func(data, args, info_all):
     edgeinfo, nodeinfo, scaler, scaler2 = info_all
 
     time = torch.Tensor([d[-1] for d in data])
-    linkids = []
+    linkids = [np.asarray(l[1]) for l in data]
     dateinfo = []
     inds = []
-    for _, l in enumerate(data):
-        linkids.append(np.asarray(l[1]))
-        # dateinfo: week, date, time
-        
+    
+    # 1. Date/Time Preprocessing
+    for l in data:
         wday = int(l[2])
-        doy = float(l[3])
-        minute = float(l[4])
-        doy_norm = doy / 365.0 * 2 * np.pi
-        minute_norm = minute / 1440.0 * 2 * np.pi
+        doy_norm = (float(l[3]) / 365.0) * 2 * np.pi
+        minute_norm = (float(l[4]) / 1440.0) * 2 * np.pi
         dateinfo.append([wday, doy_norm, minute_norm])
         inds.append(l[0])
-    lens = np.asarray([len(k) for k in linkids], dtype=np.int16)
     
-    def info(xs):
+    lens = np.asarray([len(k) for k in linkids], dtype=np.int16)
+    max_seq_len = lens.max()
+    def get_infos(xs):
         infos = []
-        length = 0
         for x in xs:
             info = edgeinfo[x]
             infot = []
-            infot.append(highway[info[0]] if info[0] in highway.keys() else 0)
-            infot.append(info[1])
-            infot.append(length)
-            length += info[1]
+            
+            # --- HIGHWAY: Now returns 2 IDs instead of 1 ---
+            infot += parse_highway_tags(info[0]) # Adds [ID1, ID2]
+            
+            infot.append(info[1]) # Length
+            infot.append(0)       # Placeholder for cumulative length (calculated later)
+            
             try:
-                infot += [nodeinfo[info[2]][0],nodeinfo[info[2]][1],nodeinfo[info[3]][0],nodeinfo[info[3]][1]]
+                infot += [nodeinfo[info[2]][0], nodeinfo[info[2]][1], 
+                          nodeinfo[info[3]][0], nodeinfo[info[3]][1]]
             except:
-                print(info)
+                infot += [0.0, 0.0, 0.0, 0.0]
+            
             infos.append(np.asarray(infot))
-            # highway length sumoflength gps4
-
         return infos
 
-    con_links = np.concatenate([info(b) for b in linkids], dtype='object')
-    # print(merge_start_mask.shape, merge_pad_mask.shape)
-    mask = np.arange(lens.max()) < lens[:, None]
-    padded = np.zeros((*mask.shape, 1+2+4), dtype=np.float32)
-    con_links[:, 1:3] = scaler.transform(con_links[:, 1:3])
-    con_links[:, 3:7] = scaler2.transform(con_links[:, 3:7])
-
-    padded[mask] = con_links
+    # 4. Global Scaling Logic
+    # We extract all segments to scale length and GPS coordinates uniformly
+    all_segments = []
+    for b in linkids:
+        seg_list = get_infos(b)
+        # Calculate cumulative length within the sequence
+        cum_len = 0
+        for s in seg_list:
+            s[3] = cum_len # Index 3 is the placeholder for cumulative length
+            cum_len += s[2] # Index 2 is length
+        all_segments.extend(seg_list)
     
-    return {'links':torch.from_numpy(padded),
-            'dateinfo': torch.from_numpy(np.asarray(dateinfo, dtype=np.float32)),
-            'lens':torch.LongTensor(lens), 
-            'inds': inds, 
-            }, time
+    all_segments = np.array(all_segments)
+    
+    # Scale: Length (idx 2), CumLen (idx 3)
+    all_segments[:, 2:4] = scaler.transform(all_segments[:, 2:4])
+    # Scale: GPS (idx 4 to 7)
+    all_segments[:, 4:8] = scaler2.transform(all_segments[:, 4:8])
+
+    # 5. Final Padded Tensor Construction
+    # Shape: [Batch, Max_Seq, 8] 
+    # Features: [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2]
+    padded = np.zeros((len(data), max_seq_len, 8), dtype=np.float32)
+    
+    curr_idx = 0
+    for i, l in enumerate(lens):
+        padded[i, :l] = all_segments[curr_idx : curr_idx + l]
+        curr_idx += l
+    
+    return {
+        'links': torch.from_numpy(padded),
+        'dateinfo': torch.from_numpy(np.asarray(dateinfo, dtype=np.float32)),
+        'lens': torch.LongTensor(lens), 
+        'inds': inds, 
+    }, time
 
 class BatchSampler:
     def __init__(self, dataset, batch_size):

@@ -1,35 +1,98 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.blocks.encoder import SegmentEncoder, ContrastiveEncoder
-from models.blocks.LayerNormGRU import LayerNormGRU
-import copy
+from models.blocks.encoder import FullEncoder
+from models.blocks.LayerNormGRU import LayerNormBiGRU
+
 class Cl_TTE(nn.Module):
-    def __init__(self, d_model, nhead, nlayer, seq_layer,decoder_layer):
+    def __init__(self, d_model, nhead, nlayer, seq_layer,temperature=0.1):
         super().__init__()
         self.d_model = d_model
-        self.segment_encoder = SegmentEncoder(
-            d_model= d_model
-        )
-        self.alpha_h = nn.Parameter(torch.tensor(0.2))
-        self.contrastive = ContrastiveEncoder(
-            d_model=d_model,
-            nhead=nhead,
-            nlayer=nlayer
-        )
-        self.post_norm = nn.LayerNorm(d_model)
-        self.temporal_block = LayerNormGRU(input_dim=d_model, hidden_dim=d_model, num_layers=seq_layer)
+        self.temperature = temperature
+        # segment encoding
+        self.enc = FullEncoder(d_model,nlayer=nlayer)
+        # temporal modeling
+        self.temporal_block = LayerNormBiGRU(input_dim=d_model, hidden_dim=d_model, num_layers=seq_layer)
+        # attention pooling
+        attn_dim = d_model * 2
+        self.attn_norm = nn.LayerNorm(attn_dim)
+        self.attention_layer = nn.MultiheadAttention(embed_dim=attn_dim, num_heads=nhead, batch_first=True)
         
-        decoder_head = 1
+        self.sum_pooler = lambda x, mask: (x * mask.unsqueeze(-1)).sum(dim=1)
         
-        self.decoder = Decoder(d_model=d_model, N=decoder_layer, heads=decoder_head)
+        mlp_in_dim = attn_dim + self.enc.datetime_dim
         
-        mlp_in_dim = d_model + self.segment_encoder.datetime_dim
         self.regression_mlp = nn.Sequential(
             nn.Linear(mlp_in_dim, mlp_in_dim//2),
             nn.LeakyReLU(),
-            nn.Linear(mlp_in_dim//2, 1)
+            nn.Linear(mlp_in_dim//2, mlp_in_dim//4),
+            nn.LeakyReLU(),
+            nn.Linear(mlp_in_dim//4, 1)
         )
+        
+        self.contrastive_mlp = nn.Sequential(
+            nn.Linear(attn_dim, attn_dim//2),
+            nn.LeakyReLU(),
+            nn.Linear(attn_dim//2, attn_dim//4)
+        )
+        
+        
+    def regression_branch(self, z, start_time):
+        z_time = torch.concat([z, start_time], dim=-1) # (B,D + 33)
+        return self.regression_mlp(z_time)
+    
+    def contrastive_branch(self, z_all, y_true, sigma_percent=0.1):
+        """
+        Fixed for Label-Relative Soft Contrastive Loss.
+        sigma_percent: 0.1 means similarity drops significantly beyond a 10% time diff.
+        """
+        # z_all: (B, D), y_true: (B,)
+        B = y_true.size(0)
+        
+        # 1. Project and Normalize (Standard CL practice)
+        z_proj = self.contrastive_mlp(z_all) 
+        z_proj = F.normalize(z_proj, p=2, dim=-1) 
+        
+        # 2. Compute Similarity Matrix
+        y_i = y_true.unsqueeze(1)
+        y_j = y_true.unsqueeze(0)
+
+        d = torch.abs(y_i - y_j) / (0.5 * (y_i + y_j) + 1e-6)
+        
+        # Gaussian Kernel for Soft Weights: S_ij = exp(-|yi - yj|^2 / (2 * sigma^2))
+        soft_weights = torch.exp(- (d**2) / (2 * sigma_percent**2))
+        soft_weights.fill_diagonal_(0) # Exclude self-contrast
+        
+        # 3. Compute Similarity Matrix (Logits)
+        # Dot product similarity scaled by temperature
+        sim_logits = torch.matmul(z_proj, z_proj.T) / self.temperature # (B, B)
+        
+        # Mask diagonals for the denominator (LogSumExp)
+        mask = torch.eye(B, device=y_true.device).bool()
+        sim_logits_masked = sim_logits.masked_fill(mask, float('-inf'))
+        
+        # 4. Calculate Log-Softmax (Log-Probs)
+        # log( exp(zi*zj) / sum(exp(zi*zk)) )
+        log_prob = sim_logits_masked - torch.logsumexp(sim_logits_masked, dim=1, keepdim=True)
+        
+        # 5. Weighted Contrastive Loss
+        # Instead of mean(log_prob[pos]), we take the weighted sum
+        # Samples with similar y will have soft_weights close to 1
+        weighted_log_prob = soft_weights * log_prob
+        
+        # Normalize by the sum of weights per anchor to keep gradients stable
+        sum_weights = soft_weights.sum(dim=1) # (B,)
+        
+        valid_anchors = sum_weights > 1e-6
+        if valid_anchors.any():
+            loss = -(weighted_log_prob[valid_anchors].sum(dim=1) / sum_weights[valid_anchors]).mean()
+        else:
+            # Fallback if batch is somehow empty or identical
+            loss = torch.tensor(0.0, device=y_true.device, requires_grad=True)
+        
+        return loss
+        
+        
         
     def forward(self, inputs, y_true, args):
         # inputs: 
@@ -37,106 +100,25 @@ class Cl_TTE(nn.Module):
         # dateinfo : [B, 3]
         # valid_mask: [B, T] 
         # lens: [B]
-        # y_true: [B, 1] --> logged gt
         links = inputs['links']
         dateinfo = inputs['dateinfo']
         lens = inputs['lens']
         max_len = torch.max(lens).item()
         segment_mask = torch.arange(max_len, device=lens.device).unsqueeze(0) < lens.unsqueeze(1)
         
-        segment_rep, datetimerep = self.segment_encoder(links,dateinfo,lens)  # (B, T, D)
-        with torch.amp.autocast(device_type="cuda" if segment_rep.is_cuda else "cpu", enabled=False):
-            # CRITICAL: Force the inputs to float32 as they enter the disabled zone!
-            h, l_cl = self.contrastive(
-                segment_rep.float(), 
-                lens.long(), 
-                args.mask_prob, 
-                args.data_config['noise'], 
-                args.data_config['r_percentile'], 
-                y_true.float() if y_true is not None else None
-            )
+        segment_rep, datetimerep = self.enc(links,dateinfo,lens)  # (B, T, D)
         
-        gate = torch.sigmoid(self.alpha_h)
+        h = segment_rep.transpose(0,1).contiguous() # (T, B, D)
+        h,_ = self.temporal_block(h, lens) # (T, B, 2D)
+        h = h.transpose(0,1).contiguous()
+        h_norm = self.attn_norm(h)
+        attn_output, _ = self.attention_layer(h_norm, h_norm, h_norm, key_padding_mask=~segment_mask)
         
-        h = segment_rep + gate * h
+        h_attended = h + attn_output
+        z = self.sum_pooler(h_attended, segment_mask)
         
-        h = h.transpose(0,1).contiguous() # (T, B, D)
-        h,_ = self.temporal_block(h, lens) # (B, T, D)
-        with torch.amp.autocast(device_type="cuda" if h.is_cuda else "cpu", enabled=False):
-            d = self.decoder(h.float(), inputs['lens'].long())
-        d = h.transpose(0,1).contiguous()
-        
-        
-        
-        z =  (d * segment_mask.unsqueeze(-1)).sum(dim=1) # (B, D)
-        
-        z_time = torch.concat([z, datetimerep], dim=-1) # (B,D + 33)
-        
-        t = self.regression_mlp(z_time) # (B, 1)
-
+        t = self.regression_branch(z, datetimerep) # (B, 1)
+        l_cl = self.contrastive_branch(z, y_true.squeeze(-1), args.sigma_percentile)
         
         return t, l_cl
     
-
-
-class MultiHeadAttention(nn.Module):
-    def __init__(self, heads, d_model, dropout=0.1):
-        super().__init__()
-        self.h = heads
-        self.attn_1 = nn.MultiheadAttention(embed_dim=d_model,kdim=d_model,vdim=d_model, dropout=dropout, num_heads=self.h)
-
-    def forward(self, q, k, v, len):
-        # perform linear operation and split into N heads
-        device = len.device
-        max_len = torch.max(len).item()
-        mask = torch.arange(max_len, device=device).unsqueeze(0) < len.unsqueeze(1)
-        attn_output = self.attn_1(q, k, v, key_padding_mask=~mask, need_weights=False)[0]
-        return attn_output
-
-class FeedForward(nn.Module):
-    def __init__(self, d_model, dropout=0.1):
-        super().__init__()
-        d_ff = d_model * 2
-        self.ffn = nn.Sequential(
-            nn.Linear(d_model, d_ff),
-            nn.LeakyReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_ff, d_model),
-        )
-    def forward(self, x):
-        return self.ffn(x)
-
-class DecoderLayer(nn.Module):
-    def __init__(self, d_model, heads=1, dropout=0.1):
-        super().__init__()
-        self.norm_1 = nn.LayerNorm(d_model)
-        self.norm_2 = nn.LayerNorm(d_model)
-
-        self.dropout_1 = nn.Dropout(dropout)
-        self.dropout_2 = nn.Dropout(dropout)
-
-        self.attn = MultiHeadAttention(heads, d_model, dropout=dropout)
-        self.ff = FeedForward(d_model, dropout=dropout)
-
-
-    def forward(self, x, len):
-        x1 = self.norm_1(x)
-        x = x + self.dropout_1(self.attn(x1, x1, x1, len))
-        x2 = self.norm_2(x)
-        x = x + self.dropout_2(self.ff(x2))
-        return x
-
-def get_clones(module, N):
-    return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
-
-class Decoder(nn.Module):
-    def __init__(self, d_model, N=3, heads=1, dropout=0.1):
-        super().__init__()
-        self.N = N
-        self.layers = get_clones(DecoderLayer(d_model, heads, dropout), N)
-        self.norm = nn.LayerNorm(d_model)
-
-    def forward(self, x, lens):
-        for i in range(self.N):
-            x = self.layers[i](x, lens)
-        return self.norm(x)
