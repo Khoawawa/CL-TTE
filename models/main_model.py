@@ -1,16 +1,16 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.blocks.encoder import FullEncoder
+from models.blocks.encoder import SegmentEncoder
 from models.blocks.LayerNormGRU import LayerNormBiGRU
 
 class Cl_TTE(nn.Module):
-    def __init__(self, d_model, nhead, nlayer, seq_layer,temperature=0.1):
+    def __init__(self, d_model, nhead, seq_layer,temperature=0.1):
         super().__init__()
         self.d_model = d_model
         self.temperature = temperature
         # segment encoding
-        self.enc = FullEncoder(d_model,nlayer=nlayer)
+        self.enc = SegmentEncoder(d_model)
         # temporal modeling
         self.temporal_block = LayerNormBiGRU(input_dim=d_model, hidden_dim=d_model, num_layers=seq_layer)
         # attention pooling
