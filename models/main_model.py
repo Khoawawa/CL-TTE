@@ -118,7 +118,9 @@ class Cl_TTE(nn.Module):
         z = self.sum_pooler(h_attended, segment_mask)
         
         t = self.regression_branch(z, datetimerep) # (B, 1)
-        l_cl = self.contrastive_branch(z, y_true.squeeze(-1), args.sigma_percentile)
+        
+        with torch.cuda.amp.autocast(enabled=False):
+            l_cl = self.contrastive_branch(z, y_true.squeeze(-1), args.sigma_percentile)
         
         return t, l_cl
     
