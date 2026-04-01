@@ -57,8 +57,8 @@ class Cl_TTE(nn.Module):
         y_i = y_true.unsqueeze(1)
         y_j = y_true.unsqueeze(0)
 
-        d = torch.abs(y_i - y_j) / (0.5 * (y_i + y_j) + 1e-6)
-        
+        denom = (0.5 * (y_i + y_j)).clamp(min=1.0)
+        d = torch.abs(y_i - y_j) / denom
         # Gaussian Kernel for Soft Weights: S_ij = exp(-|yi - yj|^2 / (2 * sigma^2))
         soft_weights = torch.exp(- (d**2) / (2 * sigma_percent**2))
         soft_weights.fill_diagonal_(0) # Exclude self-contrast
@@ -66,10 +66,10 @@ class Cl_TTE(nn.Module):
         # 3. Compute Similarity Matrix (Logits)
         # Dot product similarity scaled by temperature
         sim_logits = torch.matmul(z_proj, z_proj.T) / self.temperature # (B, B)
-        
+        sim_logits = sim_logits.clamp(min=-50, max=50)
         # Mask diagonals for the denominator (LogSumExp)
         mask = torch.eye(B, device=y_true.device).bool()
-        sim_logits_masked = sim_logits.masked_fill(mask, float('-inf'))
+        sim_logits_masked = sim_logits.masked_fill(mask, -1e9)
         
         # 4. Calculate Log-Softmax (Log-Probs)
         # log( exp(zi*zj) / sum(exp(zi*zk)) )
@@ -81,8 +81,7 @@ class Cl_TTE(nn.Module):
         weighted_log_prob = soft_weights * log_prob
         
         # Normalize by the sum of weights per anchor to keep gradients stable
-        sum_weights = soft_weights.sum(dim=1) # (B,)
-        
+        sum_weights = soft_weights.sum(dim=1).clamp(min=1e-6)
         valid_anchors = sum_weights > 1e-6
         if valid_anchors.any():
             loss = -(weighted_log_prob[valid_anchors].sum(dim=1) / sum_weights[valid_anchors]).mean()
