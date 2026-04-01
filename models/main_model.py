@@ -118,7 +118,7 @@ class Cl_TTE(nn.Module):
         
         t = self.regression_branch(z, datetimerep) # (B, 1)
         
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast('cuda',enabled=False):
             l_cl = self.contrastive_branch(z, y_true.squeeze(-1), args.sigma_percentile)
         
         return t, l_cl
