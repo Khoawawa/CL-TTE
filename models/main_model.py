@@ -95,19 +95,19 @@ class Cl_TTE(nn.Module):
             l_cl = None
         # regression branch
         # CAUSAL TRASNFORMER DECODER ACT AS ANTICIPATOR (DRIVER)
-        
-        T = T_plus_one - 1
+        tgt = segment_rep[:, 1:, :]
+        seq_len = tgt.size(1)
         causal_mask = nn.Transformer.generate_square_subsequent_mask(
-            T, 
+            seq_len, 
             device=links.device
-        ).to(segment_rep.dtype) 
+        ).to(tgt.dtype)
 
         driver_states = self.anticipator(
-            tgt = segment_rep[:, 1:, :],          
-            memory = map_memo,                    
-            tgt_mask = causal_mask,
-            tgt_key_padding_mask = padding_mask,  
-            memory_key_padding_mask = padding_mask_with_cls 
+            tgt = tgt,                            # (B, seq_len, D)
+            memory = map_memo,                    # (B, seq_len + 1, D)
+            tgt_mask = causal_mask,               # (seq_len, seq_len)
+            tgt_key_padding_mask = padding_mask,  # (B, seq_len)
+            memory_key_padding_mask = padding_mask_with_cls # (B, seq_len + 1)
         )
         
         last_step_indices = (lens - 1).clamp(min=0)  # (B,) ensure non-negative
