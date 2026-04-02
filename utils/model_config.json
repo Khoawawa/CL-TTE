@@ -15,6 +15,11 @@
         "d_model": 128,
         "nhead": 8,
         "seq_layer": 2
+    },
+    "Enc_Dec_CL_TTE":{
+        "d_model": 128,
+        "nhead": 8,
+        "seq_layer": 2
     }
     
 }
