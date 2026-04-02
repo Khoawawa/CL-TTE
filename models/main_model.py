@@ -97,11 +97,11 @@ class Cl_TTE(nn.Module):
         # CAUSAL TRASNFORMER DECODER ACT AS ANTICIPATOR (DRIVER)
         tgt = segment_rep[:, 1:, :]
         seq_len = tgt.size(1)
-        causal_mask = nn.Transformer.generate_square_subsequent_mask(
+        causal_mask_float = nn.Transformer.generate_square_subsequent_mask(
             seq_len, 
             device=links.device
         ).to(tgt.dtype)
-
+        causal_mask = (causal_mask_float == float('-inf'))
         driver_states = self.anticipator(
             tgt = tgt,                            # (B, seq_len, D)
             memory = map_memo,                    # (B, seq_len + 1, D)
