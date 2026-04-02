@@ -15,11 +15,13 @@ class Cl_TTE(nn.Module):
         
         self.positional_encoder = PositionalEncodingIndex(d_model=d_model)
         # map
+        encoder_final_norm = nn.LayerNorm(d_model)
         encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True, norm_first=True)
-        self.mapper = nn.TransformerEncoder(encoder_layer, num_layers=seq_layer)
+        self.mapper = nn.TransformerEncoder(encoder_layer, num_layers=seq_layer, norm=encoder_final_norm)
         # temporal modeling
+        decoder_final_norm = nn.LayerNorm(d_model)
         decoder_layer = nn.TransformerDecoderLayer(d_model=d_model, nhead=nhead, batch_first=True, norm_first=True)
-        self.anticipator = nn.TransformerDecoder(decoder_layer, num_layers=seq_layer // 2)
+        self.anticipator = nn.TransformerDecoder(decoder_layer, num_layers=seq_layer // 2, norm=decoder_final_norm)
         
         mlp_in_dim = d_model + self.enc.datetime_dim
         
@@ -35,7 +37,7 @@ class Cl_TTE(nn.Module):
         
         self.contrastive_mlp = nn.Sequential(
             nn.Linear(d_model, d_model),
-            nn.BatchNorm1d(d_model),
+            nn.LayerNorm(d_model),
             nn.ReLU(),
             nn.Linear(d_model, d_model//2)
         )
@@ -78,7 +80,7 @@ class Cl_TTE(nn.Module):
         pos = self.positional_encoder(segment_rep, padding_mask=padding_mask) # (B, T, D)
         segment_rep = segment_rep + pos
         # summarize token
-        B, T_plus_one, D = segment_rep.shape
+        B, T_plus_one, _ = segment_rep.shape
         cls_tokens = self.cls_token.expand(B, -1, -1)  # (B, 1, D)
         segment_rep = torch.cat([cls_tokens, segment_rep], dim=1)  # (B, T+1, D)
         
