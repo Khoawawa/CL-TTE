@@ -97,14 +97,17 @@ class Cl_TTE(nn.Module):
         # CAUSAL TRASNFORMER DECODER ACT AS ANTICIPATOR (DRIVER)
         
         T = T_plus_one - 1
-        causal_mask = nn.Transformer.generate_square_subsequent_mask(T, device=links.device) # (T, T)
+        causal_mask = nn.Transformer.generate_square_subsequent_mask(
+            T, 
+            device=links.device
+        ).to(segment_rep.dtype) 
 
         driver_states = self.anticipator(
-            tgt = segment_rep[:, 1:, :], # (B, T, D) exclude CLS token
-            memory = map_memo, # (B, T, D) exclude CLS token
+            tgt = segment_rep[:, 1:, :],          
+            memory = map_memo,                    
             tgt_mask = causal_mask,
-            tgt_key_padding_mask = padding_mask,
-            memory_key_padding_mask = padding_mask_with_cls
+            tgt_key_padding_mask = padding_mask,  
+            memory_key_padding_mask = padding_mask_with_cls 
         )
         
         last_step_indices = (lens - 1).clamp(min=0)  # (B,) ensure non-negative
