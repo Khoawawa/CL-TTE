@@ -66,7 +66,7 @@ def train_model(model: nn.Module, data_loaders: Dict[str, DataLoader],
                     
                     with torch.set_grad_enabled(phase == 'train'):
                         with torch.amp.autocast(args.device):
-                            output, loss_cl = model(features,truth_data, args)       
+                            output, loss_cl = model(features,truth_data)       
                                  
                             loss_eta = loss_func(truth=truth_data, predict=output)
                             
