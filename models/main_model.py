@@ -17,7 +17,7 @@ class Cl_TTE(nn.Module):
         self.mapper = nn.TransformerEncoder(encoder_layer, num_layers=seq_layer)
         # temporal modeling
         decoder_layer = nn.TransformerDecoderLayer(d_model=d_model, nhead=nhead, batch_first=True, norm_first=True)
-        self.anticipator = nn.TransformerDecoder(decoder_layer, num_layers=seq_layer)
+        self.anticipator = nn.TransformerDecoder(decoder_layer, num_layers=seq_layer // 2)
         
         mlp_in_dim = d_model + self.enc.datetime_dim
         
@@ -28,6 +28,8 @@ class Cl_TTE(nn.Module):
             nn.LeakyReLU(),
             nn.Linear(mlp_in_dim//4, 1)
         )
+        
+        self.cls_token = nn.Parameter(torch.randn(1,1,d_model))
         
         self.contrastive_mlp = nn.Sequential(
             nn.Linear(d_model, d_model//2),
