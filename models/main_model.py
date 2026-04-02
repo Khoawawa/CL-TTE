@@ -3,24 +3,23 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models.blocks.encoder import SegmentEncoder
 from models.blocks.LayerNormGRU import LayerNormBiGRU
+from models.loss.contrastive_loss import SoftContrastiveLoss
 
 class Cl_TTE(nn.Module):
-    def __init__(self, d_model, nhead, seq_layer,temperature=0.1):
+    def __init__(self, d_model, nhead, seq_layer,temperature=0.1, sigma_percent=0.1):
         super().__init__()
         self.d_model = d_model
         self.temperature = temperature
         # segment encoding
         self.enc = SegmentEncoder(d_model)
+        # map
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True, norm_first=True)
+        self.mapper = nn.TransformerEncoder(encoder_layer, num_layers=seq_layer)
         # temporal modeling
-        self.temporal_block = LayerNormBiGRU(input_dim=d_model, hidden_dim=d_model, num_layers=seq_layer)
-        # attention pooling
-        attn_dim = d_model * 2
-        self.attn_norm = nn.LayerNorm(attn_dim)
-        self.attention_layer = nn.MultiheadAttention(embed_dim=attn_dim, num_heads=nhead, batch_first=True)
+        decoder_layer = nn.TransformerDecoderLayer(d_model=d_model, nhead=nhead, batch_first=True, norm_first=True)
+        self.anticipator = nn.TransformerDecoder(decoder_layer, num_layers=seq_layer)
         
-        self.sum_pooler = lambda x, mask: (x * mask.unsqueeze(-1)).sum(dim=1)
-        
-        mlp_in_dim = attn_dim + self.enc.datetime_dim
+        mlp_in_dim = d_model + self.enc.datetime_dim
         
         self.regression_mlp = nn.Sequential(
             nn.Linear(mlp_in_dim, mlp_in_dim//2),
@@ -31,95 +30,76 @@ class Cl_TTE(nn.Module):
         )
         
         self.contrastive_mlp = nn.Sequential(
-            nn.Linear(attn_dim, attn_dim//2),
+            nn.Linear(d_model, d_model//2),
+            nn.BatchNorm1d(d_model//2),
             nn.LeakyReLU(),
-            nn.Linear(attn_dim//2, attn_dim//4)
+            nn.Linear(d_model//2, d_model//4)
         )
         
+        self.contrastive_loss = SoftContrastiveLoss(temperature=temperature, sigma_percent=sigma_percent, distance_metric='relative')
         
     def regression_branch(self, z, start_time):
         z_time = torch.concat([z, start_time], dim=-1) # (B,D + 33)
         return self.regression_mlp(z_time)
-    
-    def contrastive_branch(self, z_all, y_true, sigma_percent=0.1):
-        """
-        Fixed for Label-Relative Soft Contrastive Loss.
-        sigma_percent: 0.1 means similarity drops significantly beyond a 10% time diff.
-        """
-        # z_all: (B, D), y_true: (B,)
-        B = y_true.size(0)
-        
-        # 1. Project and Normalize (Standard CL practice)
-        z_proj = self.contrastive_mlp(z_all) 
-        z_proj = F.normalize(z_proj, p=2, dim=-1) 
-        
-        # 2. Compute Similarity Matrix
-        y_i = y_true.unsqueeze(1)
-        y_j = y_true.unsqueeze(0)
-
-        denom = (0.5 * (y_i + y_j)).clamp(min=1.0)
-        d = torch.abs(y_i - y_j) / denom
-        # Gaussian Kernel for Soft Weights: S_ij = exp(-|yi - yj|^2 / (2 * sigma^2))
-        soft_weights = torch.exp(- (d**2) / (2 * sigma_percent**2))
-        soft_weights.fill_diagonal_(0) # Exclude self-contrast
-        
-        # 3. Compute Similarity Matrix (Logits)
-        # Dot product similarity scaled by temperature
-        sim_logits = torch.matmul(z_proj, z_proj.T) / self.temperature # (B, B)
-        sim_logits = sim_logits.clamp(min=-50, max=50)
-        # Mask diagonals for the denominator (LogSumExp)
-        mask = torch.eye(B, device=y_true.device).bool()
-        sim_logits_masked = sim_logits.masked_fill(mask, -1e9)
-        
-        # 4. Calculate Log-Softmax (Log-Probs)
-        # log( exp(zi*zj) / sum(exp(zi*zk)) )
-        log_prob = sim_logits_masked - torch.logsumexp(sim_logits_masked, dim=1, keepdim=True)
-        
-        # 5. Weighted Contrastive Loss
-        # Instead of mean(log_prob[pos]), we take the weighted sum
-        # Samples with similar y will have soft_weights close to 1
-        weighted_log_prob = soft_weights * log_prob
-        
-        # Normalize by the sum of weights per anchor to keep gradients stable
-        sum_weights = soft_weights.sum(dim=1).clamp(min=1e-6)
-        valid_anchors = sum_weights > 1e-6
-        if valid_anchors.any():
-            loss = -(weighted_log_prob[valid_anchors].sum(dim=1) / sum_weights[valid_anchors]).mean()
-        else:
-            # Fallback if batch is somehow empty or identical
-            loss = torch.tensor(0.0, device=y_true.device, requires_grad=True)
-        
+    def mean_pooling(self, h, mask):
+        masked_h = h * mask.unsqueeze(-1).float()  # (B, T, D)
+        sum_h = masked_h.sum(dim=1)  # (B, D)
+        count = mask.sum(dim=1).unsqueeze(-1)  # (B, 1)
+        mean_h = sum_h / count.clamp(min=1)  # (B, D)
+        return mean_h
+    def contrastive_branch(self, h, y_true, segment_mask):
+        z = self.mean_pooling(h, segment_mask)
+        z_proj = F.normalize(self.contrastive_mlp(z), dim=-1) # (B, D//4)
+        with torch.amp.autocast('cuda',enabled=False):
+            loss = self.contrastive_loss(z_proj.float(), y_true.float())
         return loss
         
-        
-        
-    def forward(self, inputs, y_true, args):
+    def forward(self, inputs, y_true):
         # inputs: 
-        # links: [B, T, 7] -> (highway, len, culm_len, start_lat, start_lon, end_lat, end_lon)
+        # links: [B, T, 8] -> (highway1, highway2, len, culm_len, start_lat, start_lon, end_lat, end_lon)
         # dateinfo : [B, 3]
         # valid_mask: [B, T] 
         # lens: [B]
         links = inputs['links']
         dateinfo = inputs['dateinfo']
         lens = inputs['lens']
+        
         max_len = torch.max(lens).item()
         segment_mask = torch.arange(max_len, device=lens.device).unsqueeze(0) < lens.unsqueeze(1)
         
+        padding_mask = ~segment_mask
+        
         segment_rep, datetimerep = self.enc(links,dateinfo)  # (B, T, D)
         
-        h = segment_rep.transpose(0,1).contiguous() # (T, B, D)
-        h,_ = self.temporal_block(h, lens) # (T, B, 2D)
-        h = h.transpose(0,1).contiguous()
-        h_norm = self.attn_norm(h)
-        attn_output, _ = self.attention_layer(h_norm, h_norm, h_norm, key_padding_mask=~segment_mask)
+        B, T, D = segment_rep.shape
         
-        h_attended = h + attn_output
-        z = self.sum_pooler(h_attended, segment_mask)
+        # LEARNING THE MAP OF THE TRAJECTORY
+        map_memo = self.mapper(segment_rep, src_key_padding_mask=padding_mask) # (B, T, D)
         
-        t = self.regression_branch(z, datetimerep) # (B, 1)
+        # contrastive learning branch
+        if self.training:
+            l_cl = self.contrastive_branch(map_memo, y_true, segment_mask)
+        else:
+            l_cl = None
+        # regression branch
+        # CAUSAL TRASNFORMER DECODER ACT AS ANTICIPATOR (DRIVER)
+        causal_mask = nn.Transformer.generate_square_subsequent_mask(T, device=links.device) # (T, T)
         
-        with torch.amp.autocast('cuda',enabled=False):
-            l_cl = self.contrastive_branch(z, y_true.squeeze(-1), args.sigma_percentile)
+        driver_states = self.anticipator(
+            tgt = segment_rep,
+            memory = map_memo,
+            tgt_mask = causal_mask,
+            tgt_key_padding_mask = padding_mask,
+            memory_key_padding_mask = padding_mask
+        )
+        
+        last_step_indices = (lens - 1).clamp(min=0)
+        gather_indices = last_step_indices.view(B, 1, 1).expand(B, 1, self.d_model)  # (B, 1, D)
+        
+        h_final = driver_states.gather(1, index=gather_indices).squeeze(1)  # (B, D)
+        
+        # LINEAR REGRESSION
+        t = self.regression_branch(h_final, datetimerep)  # (B, 1)
         
         return t, l_cl
     

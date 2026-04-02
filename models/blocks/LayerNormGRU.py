@@ -3,7 +3,124 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
 
+
+class LayerNormGRUCell(torch.nn.Module):
+    def __init__(self, input_size, hidden_size, bias=True):
+        super(LayerNormGRUCell, self).__init__()
+
+        self.ln_i2h = torch.nn.LayerNorm(2*hidden_size, elementwise_affine=False)
+        self.ln_h2h = torch.nn.LayerNorm(2*hidden_size, elementwise_affine=False)
+        self.ln_cell_1 = torch.nn.LayerNorm(hidden_size, elementwise_affine=False)
+        self.ln_cell_2 = torch.nn.LayerNorm(hidden_size, elementwise_affine=False)
+
+        self.i2h = torch.nn.Linear(input_size, 2 * hidden_size, bias=bias)
+        self.h2h = torch.nn.Linear(hidden_size, 2 * hidden_size, bias=bias)
+        self.h_hat_W = torch.nn.Linear(input_size, hidden_size, bias=bias)
+        self.h_hat_U = torch.nn.Linear(hidden_size, hidden_size, bias=bias)
+        self.hidden_size = hidden_size
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        for name, param in self.named_parameters():
+            if "weight" in name:
+                nn.init.xavier_uniform_(param)
+            elif "bias" in name:
+                nn.init.zeros_(param)
+
+    def forward(self, x, h):
+
+        h = h.view(h.size(0), -1)
+        x = x.view(x.size(0), -1)
+
+        # Linear mappings
+        i2h = self.i2h(x)
+        h2h = self.h2h(h)
+
+        # Layer norm
+        i2h = self.ln_i2h(i2h)
+        h2h = self.ln_h2h(h2h)
+
+        preact = i2h + h2h
+
+        # activations
+        gates = preact[:, :].sigmoid()
+        z_t = gates[:, :self.hidden_size]
+        r_t = gates[:, -self.hidden_size:]
+
+        # h_hat
+        h_hat_first_half = self.h_hat_W(x)
+        h_hat_last_half = self.h_hat_U(h)
+
+        # layer norm
+        h_hat_first_half = self.ln_cell_1( h_hat_first_half )
+        h_hat_last_half = self.ln_cell_2( h_hat_last_half )
+
+        h_hat = torch.tanh(  h_hat_first_half + torch.mul(r_t,   h_hat_last_half ) )
+
+        h_t = torch.mul( 1-z_t , h ) + torch.mul( z_t, h_hat)
+
+        # Reshape for compatibility
+
+        h_t = h_t.view( h_t.size(0), -1)
+        return h_t
+
+
+class LayerNormGRU(nn.Module):
+    def __init__(self, input_dim, hidden_dim, num_layers = 2, bias=True):
+        super(LayerNormGRU, self).__init__()
+
+        self.input_dim = input_dim
+        # Hidden dimensions
+        self.hidden_dim = hidden_dim
+
+        # Number of hidden layers
+        self.num_layers = num_layers
+
+        self.hidden0 = nn.ModuleList([
+            LayerNormGRUCell(input_size=(input_dim if layer == 0 else hidden_dim), hidden_size=hidden_dim, bias=bias)
+            for layer in range(num_layers)
+        ])
+
+
+    def forward(self, input: torch.Tensor, seq_lens=None):
+        device = input.device
+        seq_lens = seq_lens.to(device).long() if seq_lens is not None else None
+        seq_len, batch_size, _ = input.size()
+        # print("input:", input.shape)
+        hx = input.new_zeros(self.num_layers, batch_size, self.hidden_dim, requires_grad=False)
+        # print("hx:", hx.shape)
+        ht = []
+        for i in range(seq_len):
+            ht.append([None] * (self.num_layers))
+
+        seq_len_mask = input.new_ones(batch_size, seq_len, self.hidden_dim, requires_grad=False)
+        if seq_lens != None:
+            for i, l in enumerate(seq_lens):
+                seq_len_mask[i, l:, :] = 0
+        seq_len_mask = seq_len_mask.transpose(0, 1)
+
+        indices = (seq_lens - 1).unsqueeze(1).unsqueeze(0).unsqueeze(0).repeat(
+            [1, self.num_layers, 1, self.hidden_dim])
+        h = hx
+
+        for t, x in enumerate(input):
+            for l, layer in enumerate(self.hidden0):
+                ht_= layer(x, h[l])
+                ht[t][l] = ht_ * seq_len_mask[t]
+                x = ht[t][l]
+            ht[t] = torch.stack(ht[t])
+            h = ht[t]
+        y = torch.stack([h[-1] for h in ht])
+        # print("\ny:", y.shape)
+        hy = torch.stack(list(torch.stack(ht).gather(dim=0, index=indices).squeeze(0)))
+
+        return y, hy
+        
 class LayerNormBiGRUCell(torch.nn.Module):
     def __init__(self, hidden_size, bias=True):
         super().__init__()
