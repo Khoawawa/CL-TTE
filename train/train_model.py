@@ -37,10 +37,10 @@ def train_model(model: nn.Module, data_loaders: Dict[str, DataLoader],
     save_dict, best_mae = {'state_dict': copy.deepcopy(model.state_dict()),
                            'epoch': 0
                            }, 10000    
-    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=.2, patience=2,
-    #                                                  threshold=1e-2, threshold_mode='rel', min_lr=1e-7)
-    # if hasattr(args, 'scheduler_state_dict'):
-    #     scheduler.load_state_dict(args.scheduler_state_dict)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=.2, patience=2,
+                                                     threshold=1e-4, threshold_mode='rel', min_lr=1e-7)
+    if hasattr(args, 'scheduler_state_dict'):
+        scheduler.load_state_dict(args.scheduler_state_dict)
     print("LR: ", optimizer.param_groups[0]['lr'])
     scaler = torch.amp.GradScaler()
     try:
@@ -124,14 +124,14 @@ def train_model(model: nn.Module, data_loaders: Dict[str, DataLoader],
                             state_dict=copy.deepcopy(model.state_dict()),
                             epoch=epoch,
                             optimizer_state_dict=copy.deepcopy(optimizer.state_dict()),
-                            # scheduler_state_dict=copy.deepcopy(scheduler.state_dict())
+                            scheduler_state_dict=copy.deepcopy(scheduler.state_dict())
                         )
                         save_model(f"{model_folder}/best_model.pkl", **save_dict)
                         print(f"New best MAE {best_mae} at epoch {epoch}, model saved.")
                     else:
                         print(f"Current MAE {scores['MAE']} more than best MAE {best_mae}")
 
-            # scheduler.step(running_loss['val'])
+            scheduler.step(running_loss['val'])
     finally:
         time_elapsed = time.perf_counter() - since
         hours, remainder = divmod(time_elapsed, 3600)
@@ -145,5 +145,5 @@ def train_model(model: nn.Module, data_loaders: Dict[str, DataLoader],
                    **{'state_dict': copy.deepcopy(model.state_dict()),
                       'epoch': epoch,
                       'optimizer_state_dict': copy.deepcopy(optimizer.state_dict()),
-                    #   'scheduler_state_dict': copy.deepcopy(scheduler.state_dict())
+                      'scheduler_state_dict': copy.deepcopy(scheduler.state_dict())
                       })
