@@ -69,55 +69,80 @@ class LayerNormGRUCell(torch.nn.Module):
         h_t = h_t.view( h_t.size(0), -1)
         return h_t
 
-
 class LayerNormGRU(nn.Module):
-    def __init__(self, input_dim, hidden_dim, num_layers = 2, bias=True):
+    def __init__(self, input_dim, hidden_dim, num_layers=2, bias=True):
         super(LayerNormGRU, self).__init__()
-
         self.input_dim = input_dim
-        # Hidden dimensions
         self.hidden_dim = hidden_dim
-
-        # Number of hidden layers
         self.num_layers = num_layers
 
         self.hidden0 = nn.ModuleList([
-            LayerNormGRUCell(input_size=(input_dim if layer == 0 else hidden_dim), hidden_size=hidden_dim, bias=bias)
-            for layer in range(num_layers)
+            LayerNormGRUCell(
+                input_size=(input_dim if layer == 0 else hidden_dim), 
+                hidden_size=hidden_dim, 
+                bias=bias
+            ) for layer in range(num_layers)
         ])
 
-
-    def forward(self, input: torch.Tensor, seq_lens=None):
+    def forward(self, input: torch.Tensor, seq_lens=None, hx=None):
         device = input.device
-        seq_lens = seq_lens.to(device).long() if seq_lens is not None else None
         seq_len, batch_size, _ = input.size()
-        # print("input:", input.shape)
-        hx = input.new_zeros(self.num_layers, batch_size, self.hidden_dim, requires_grad=False)
-        # print("hx:", hx.shape)
-        ht = []
-        for i in range(seq_len):
-            ht.append([None] * (self.num_layers))
+        
+        # --- Handle Initial Hidden State ---
+        if hx is None:
+            # Default to zeros if no h0 is provided
+            h = input.new_zeros(self.num_layers, batch_size, self.hidden_dim)
+        else:
+            # hx should be (num_layers, batch_size, hidden_dim)
+            h = hx
 
-        seq_len_mask = input.new_ones(batch_size, seq_len, self.hidden_dim, requires_grad=False)
-        if seq_lens != None:
+        seq_lens = seq_lens.to(device).long() if seq_lens is not None else None
+        
+        # Storage for all time steps (for 'y' output)
+        ht_all_steps = []
+
+        # Create mask for variable length sequences
+        seq_len_mask = input.new_ones(batch_size, seq_len, self.hidden_dim)
+        if seq_lens is not None:
             for i, l in enumerate(seq_lens):
-                seq_len_mask[i, l:, :] = 0
-        seq_len_mask = seq_len_mask.transpose(0, 1)
+                if l < seq_len:
+                    seq_len_mask[i, l:, :] = 0
+        seq_len_mask = seq_len_mask.transpose(0, 1) # (seq_len, batch, hidden)
 
-        indices = (seq_lens - 1).unsqueeze(1).unsqueeze(0).unsqueeze(0).repeat(
-            [1, self.num_layers, 1, self.hidden_dim])
-        h = hx
-
+        # Loop through time
         for t, x in enumerate(input):
+            current_layer_hiddens = []
+            layer_input = x
+            
             for l, layer in enumerate(self.hidden0):
-                ht_= layer(x, h[l])
-                ht[t][l] = ht_ * seq_len_mask[t]
-                x = ht[t][l]
-            ht[t] = torch.stack(ht[t])
-            h = ht[t]
-        y = torch.stack([h[-1] for h in ht])
-        # print("\ny:", y.shape)
-        hy = torch.stack(list(torch.stack(ht).gather(dim=0, index=indices).squeeze(0)))
+                # Process cell
+                h_next = layer(layer_input, h[l])
+                
+                # Apply mask: if current step t >= seq_len, keep the old hidden state 
+                # or zero it out based on your masking preference. 
+                # Here we follow your logic: mask current output.
+                h_masked = h_next * seq_len_mask[t]
+                
+                current_layer_hiddens.append(h_masked)
+                # Input for the next layer is the output of this layer
+                layer_input = h_masked
+            
+            # Update h for the next time step
+            h = torch.stack(current_layer_hiddens) 
+            ht_all_steps.append(h)
+
+        # y: The output of the last layer for all time steps
+        # shape: (seq_len, batch_size, hidden_dim)
+        y = torch.stack([step_h[-1] for step_h in ht_all_steps])
+        
+        # hy: The hidden state at the last valid time step for each layer
+        # Use gather to pick the hidden state at index (lens - 1)
+        indices = (seq_lens - 1).view(1, batch_size, 1).expand(self.num_layers, -1, self.hidden_dim)
+        all_hiddens_tensor = torch.stack(ht_all_steps) # (seq_len, num_layers, batch, hidden)
+        
+        # Permute to (num_layers, seq_len, batch, hidden) to gather over time
+        all_hiddens_tensor = all_hiddens_tensor.permute(1, 0, 2, 3)
+        hy = all_hiddens_tensor.gather(dim=1, index=indices.unsqueeze(1)).squeeze(1)
 
         return y, hy
         

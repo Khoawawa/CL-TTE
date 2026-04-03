@@ -10,18 +10,17 @@ class GRUAnticipator(nn.Module):
         self.d_model = d_model
         self.num_layers = num_layers
         
-        self.gru = LayerNormGRU(input_size=d_model * 2, hidden_size=d_model, num_layers=num_layers)
+        self.gru = LayerNormGRU(input_size=d_model, hidden_size=d_model, num_layers=num_layers)
     
     def forward(self, x, z, lens):
         # x: (B, T, D)
         # z: (B, D) - context vector
         # lens: (B,) - lengths of each sequence
         B, T, D = x.shape 
-        z_expanded = z.unsqueeze(1).expand(-1, T, -1)  # (B, T, D)
-        gru_input = torch.cat([x, z_expanded], dim=-1)  # (B, T, 2D)
         
-        gru_input = gru_input.transpose(0, 1).contiguous()  # (T, B, 2D)
-        y, hy = self.gru(gru_input, lens)
+        gru_input = x.transpose(0, 1).contiguous()  # (T, B, 2D)
+        h0 = z.unsqueeze(0).expand(self.num_layers, -1, -1).contiguous()  # (num_layers, B, D)
+        y, hy = self.gru(gru_input, lens, h0=h0)
         
         final_driver_state = hy[-1]  # (B, D)
         

@@ -23,6 +23,7 @@ class Cl_TTE(nn.Module):
         
         mlp_in_dim = d_model + self.enc.datetime_dim
         
+        self.pre_regression_norm = nn.LayerNorm(d_model)
         self.regression_mlp = nn.Sequential(
             nn.Linear(mlp_in_dim, mlp_in_dim//2),
             nn.LeakyReLU(),
@@ -92,8 +93,8 @@ class Cl_TTE(nn.Module):
         else:
             l_cl = None
         # Driver anticipation
-        h_final = self.anticipator(segment_rep, z_map, lens)  # (B, D)
-        
+        h_final = self.anticipator(map_memo[:, 1:, :], z_map, lens)  # (B, D)
+        h_final = self.pre_regression_norm(h_final + z_map)
         # LINEAR REGRESSION
         t = self.regression_branch(h_final, datetimerep)  # (B, 1)
         
