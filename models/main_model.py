@@ -78,8 +78,8 @@ class Cl_TTE(nn.Module):
         
         pos = self.positional_encoder(segment_rep, padding_mask=padding_mask) # (B, T, D)
         segment_rep = segment_rep + pos
-        # summarize token
-        B, T_plus_one, _ = segment_rep.shape
+        # summarize tokena
+        B, _, _ = segment_rep.shape
         cls_tokens = self.cls_token.expand(B, -1, -1)  # (B, 1, D)
         segment_rep = torch.cat([cls_tokens, segment_rep], dim=1)  # (B, T+1, D)
         
