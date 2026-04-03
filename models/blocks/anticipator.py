@@ -10,7 +10,7 @@ class GRUAnticipator(nn.Module):
         self.d_model = d_model
         self.num_layers = num_layers
         
-        self.gru = LayerNormGRU(input_size=d_model, hidden_size=d_model, num_layers=num_layers)
+        self.gru = LayerNormGRU(input_dim=d_model, hidden_dim=d_model, num_layers=num_layers)
     
     def forward(self, x, z, lens):
         # x: (B, T, D)
