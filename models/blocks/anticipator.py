@@ -20,7 +20,7 @@ class GRUAnticipator(nn.Module):
         
         gru_input = x.transpose(0, 1).contiguous()  # (T, B, 2D)
         h0 = z.unsqueeze(0).expand(self.num_layers, -1, -1).contiguous()  # (num_layers, B, D)
-        y, hy = self.gru(gru_input, lens, h0=h0)
+        y, hy = self.gru(gru_input, lens, hx=h0)
         
         final_driver_state = hy[-1]  # (B, D)
         
