@@ -21,7 +21,8 @@ class GRUAnticipator(nn.Module):
         gru_input = torch.cat([x, z_expanded], dim=-1)  # (B, T, 2D)
         
         gru_input = gru_input.transpose(0, 1).contiguous()  # (T, B, 2D)
-        output = self.gru(gru_input, lens)  # (T, B, D)
-         = output.transpose(0, 1).contiguous()  # (B, T, D)
+        y, hy = self.gru(gru_input, lens)
         
-        return output
+        final_driver_state = hy[-1]  # (B, D)
+        
+        return final_driver_state
