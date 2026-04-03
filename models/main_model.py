@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from models.blocks.encoder import SegmentEncoder
-from models.blocks.LayerNormGRU import LayerNormBiGRU
+from models.blocks.anticipator import GRUAnticipator
 from models.loss.contrastive_loss import SoftContrastiveLoss
 from models.base.PositionalEncoding import PositionalEncodingIndex
 class Cl_TTE(nn.Module):
@@ -19,7 +19,7 @@ class Cl_TTE(nn.Module):
         encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True, norm_first=True)
         self.mapper = nn.TransformerEncoder(encoder_layer, num_layers=seq_layer, norm=encoder_final_norm)
         # temporal modeling
-        self.anticipator = GRUAnticipator(d_model=d_model, nhead=nhead, num_layers=seq_layer)
+        self.anticipator = GRUAnticipator(d_model=d_model, num_layers=seq_layer)
         
         mlp_in_dim = d_model + self.enc.datetime_dim
         
@@ -85,33 +85,14 @@ class Cl_TTE(nn.Module):
         padding_mask_with_cls = torch.cat([torch.zeros(B, 1, dtype=torch.bool, device=padding_mask.device), padding_mask], dim=1)  # (B, T+1)
         # LEARNING THE MAP OF THE TRAJECTORY
         map_memo = self.mapper(segment_rep, src_key_padding_mask=padding_mask_with_cls) # (B, T, D)
-
+        z_map = map_memo[:, 0, :] # (B, D) CLS token representation
         # contrastive learning branch
         if self.training:
             l_cl = self.contrastive_branch(map_memo, y_true)
         else:
             l_cl = None
-        # regression branch
-        # CAUSAL TRASNFORMER DECODER ACT AS ANTICIPATOR (DRIVER)
-        tgt = segment_rep[:, 1:, :]
-        seq_len = tgt.size(1)
-        causal_mask_float = nn.Transformer.generate_square_subsequent_mask(
-            seq_len, 
-            device=links.device
-        ).to(tgt.dtype)
-        causal_mask = (causal_mask_float == float('-inf'))
-        driver_states = self.anticipator(
-            tgt = tgt,                            # (B, seq_len, D)
-            memory = map_memo,                    # (B, seq_len + 1, D)
-            tgt_mask = causal_mask,               # (seq_len, seq_len)
-            tgt_key_padding_mask = padding_mask,  # (B, seq_len)
-            memory_key_padding_mask = padding_mask_with_cls # (B, seq_len + 1)
-        )
-        
-        last_step_indices = (lens - 1).clamp(min=0)  # (B,) ensure non-negative
-        gather_indices = last_step_indices.view(B, 1, 1).expand(B, 1, self.d_model)  # (B, 1, D)
-        
-        h_final = driver_states.gather(1, index=gather_indices).squeeze(1)  # (B, D)
+        # Driver anticipation
+        h_final = self.anticipator(segment_rep, z_map, lens)  # (B, D)
         
         # LINEAR REGRESSION
         t = self.regression_branch(h_final, datetimerep)  # (B, 1)
