@@ -27,9 +27,7 @@ class Cl_TTE(nn.Module):
         self.regression_mlp = nn.Sequential(
             nn.Linear(mlp_in_dim, mlp_in_dim//2),
             nn.LeakyReLU(),
-            nn.Linear(mlp_in_dim//2, mlp_in_dim//4),
-            nn.LeakyReLU(),
-            nn.Linear(mlp_in_dim//4, 1)
+            nn.Linear(mlp_in_dim//2, 1)
         )
         
         self.cls_token = nn.Parameter(torch.randn(1,1,d_model))
