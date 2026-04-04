@@ -70,7 +70,7 @@ class PositionalEncodingIndex(nn.Module):
                             (matches the format expected by TransformerEncoderLayer src_key_padding_mask)
         """
         seq_len = x.shape[1]
-        pe = self.pe[:, :seq_len, :]           # (1, T, D)
+        pe = self.pe[:, :seq_len, :].clone()           # (1, T, D)
 
         if padding_mask is not None:
             # Zero positional encoding where we will mask attention anyway

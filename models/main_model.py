@@ -10,6 +10,7 @@ class Cl_TTE(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.temperature = temperature
+        assert seq_layer >= 2, "seq_layer should be at least 2 to have separate layers for mapping and anticipation"
         # segment encoding
         self.enc = SegmentEncoder(d_model)
         
@@ -30,7 +31,7 @@ class Cl_TTE(nn.Module):
             nn.Linear(mlp_in_dim//2, 1)
         )
         
-        self.cls_token = nn.Parameter(torch.randn(1,1,d_model))
+        self.cls_token = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
         
         self.contrastive_mlp = nn.Sequential(
             nn.Linear(d_model, d_model),
@@ -44,16 +45,10 @@ class Cl_TTE(nn.Module):
     def regression_branch(self, z, start_time):
         z_time = torch.concat([z, start_time], dim=-1) # (B,D + 33)
         return self.regression_mlp(z_time)
-    def mean_pooling(self, h, mask):
-        masked_h = h * mask.unsqueeze(-1).float()  # (B, T, D)
-        sum_h = masked_h.sum(dim=1)  # (B, D)
-        count = mask.sum(dim=1).unsqueeze(-1)  # (B, 1)
-        mean_h = sum_h / count.clamp(min=1)  # (B, D)
-        return mean_h
-    def contrastive_branch(self, h, y_true):
-        z = h[:, 0, :] # (B, D) CLS token representation
-        z_proj = F.normalize(self.contrastive_mlp(z), dim=-1) # (B, D//4)
+
+    def contrastive_branch(self, z, y_true):
         with torch.amp.autocast('cuda',enabled=False):
+            z_proj = F.normalize(self.contrastive_mlp(z), dim=-1) # (B, D//2)
             loss = self.contrastive_loss(z_proj.float(), y_true.float())
         return loss
         
@@ -69,30 +64,38 @@ class Cl_TTE(nn.Module):
         
         max_len = torch.max(lens).item()
         segment_mask = torch.arange(max_len, device=lens.device).unsqueeze(0) < lens.unsqueeze(1)
-        
         padding_mask = ~segment_mask
         
-        segment_rep, datetimerep = self.enc(links,dateinfo)  # (B, T, D)
+        # ENCODING THE SEGMENTS
+        segment_rep_ori, datetimerep = self.enc(links,dateinfo)  # (B, T, D)
         
-        pos = self.positional_encoder(segment_rep, padding_mask=padding_mask) # (B, T, D)
-        segment_rep = segment_rep + pos
-        # summarize tokena
-        B, _, _ = segment_rep.shape
+        # positional encoding
+        segment_rep_ori = self.positional_encoder(segment_rep_ori, padding_mask=padding_mask) # (B, T, D)
+        
+        # cls token preparation
+        B, _, _ = segment_rep_ori.shape
         cls_tokens = self.cls_token.expand(B, -1, -1)  # (B, 1, D)
-        segment_rep = torch.cat([cls_tokens, segment_rep], dim=1)  # (B, T+1, D)
+        segment_rep = torch.cat([cls_tokens, segment_rep_ori], dim=1)  # (B, T+1, D)
+        padding_mask_with_cls = torch.cat([torch.zeros(B, 1, dtype=torch.bool, device=padding_mask.device), padding_mask], dim=1)
         
-        padding_mask_with_cls = torch.cat([torch.zeros(B, 1, dtype=torch.bool, device=padding_mask.device), padding_mask], dim=1)  # (B, T+1)
         # LEARNING THE MAP OF THE TRAJECTORY
-        map_memo = self.mapper(segment_rep, src_key_padding_mask=padding_mask_with_cls) # (B, T, D)
-        z_map = map_memo[:, 0, :].detach() # (B, D) CLS token representation
+        map_memo = self.mapper(segment_rep, src_key_padding_mask=padding_mask_with_cls) # (B, 1 + T, D)
+        
+        # get the CLS token representation as the global representation of the trajectory
+        z_map = map_memo[:, 0, :] # (B, D) CLS token representation
+        
         # contrastive learning branch
         if self.training:
-            l_cl = self.contrastive_branch(map_memo, y_true)
+            l_cl = self.contrastive_branch(z_map, y_true)
         else:
             l_cl = None
+            
         # Driver anticipation
+        z_map = z_map.detach() # (B, D) CLS token representation
         h_final = self.anticipator(map_memo[:, 1:, :], z_map, lens)  # (B, D)
+        
         h_final = self.pre_regression_norm(h_final)
+        
         # LINEAR REGRESSION
         t = self.regression_branch(h_final, datetimerep)  # (B, 1)
         
