@@ -19,7 +19,7 @@ class Cl_TTE(nn.Module):
         encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True, norm_first=True)
         self.mapper = nn.TransformerEncoder(encoder_layer, num_layers=seq_layer, norm=encoder_final_norm)
         # temporal modeling
-        self.anticipator = GRUAnticipator(d_model=d_model, num_layers=seq_layer)
+        self.anticipator = GRUAnticipator(d_model=d_model, num_layers=seq_layer // 2)
         
         mlp_in_dim = d_model + self.enc.datetime_dim
         
