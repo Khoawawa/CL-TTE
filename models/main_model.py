@@ -86,7 +86,7 @@ class Cl_TTE(nn.Module):
         padding_mask_with_cls = torch.cat([torch.zeros(B, 1, dtype=torch.bool, device=padding_mask.device), padding_mask], dim=1)  # (B, T+1)
         # LEARNING THE MAP OF THE TRAJECTORY
         map_memo = self.mapper(segment_rep, src_key_padding_mask=padding_mask_with_cls) # (B, T, D)
-        z_map = map_memo[:, 0, :] # (B, D) CLS token representation
+        z_map = map_memo[:, 0, :].detach() # (B, D) CLS token representation
         # contrastive learning branch
         if self.training:
             l_cl = self.contrastive_branch(map_memo, y_true)
@@ -94,7 +94,7 @@ class Cl_TTE(nn.Module):
             l_cl = None
         # Driver anticipation
         h_final = self.anticipator(map_memo[:, 1:, :], z_map, lens)  # (B, D)
-        h_final = self.pre_regression_norm(h_final + z_map)
+        h_final = self.pre_regression_norm(h_final)
         # LINEAR REGRESSION
         t = self.regression_branch(h_final, datetimerep)  # (B, 1)
         
