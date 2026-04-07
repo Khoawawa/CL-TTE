@@ -57,6 +57,7 @@ class Cl_TTE(nn.Module):
         segment_rep_clean, segment_rep_aug = torch.chunk(segment_rep, 2, dim=1) # (B, T, D)
         
         # CONTRASTIVE LEARNING
+        with torch.
         h_cl, l_cl = self.contrast_enc(segment_rep_clean, segment_rep_aug, src_key_padding_mask=padding_mask, y_true=y_true)
         
         # GATED RESIDUAL CONNECTION
