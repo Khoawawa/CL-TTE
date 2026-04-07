@@ -230,6 +230,18 @@ def load_datadoct_pre(args):
         scaler2.fit([[0,0,0,0]])
         scaler2.mean_ = [104.06379941,  30.65844312, 104.06381633,  30.65845601]
         scaler2.scale_ = [0.03480474, 0.02717924, 0.03484908, 0.02719959]
+        
+    elif "hcm" in args.dataset:
+        scaler = StandardScaler()
+        scaler.fit([[0,0]])
+        scaler.mean_ = [94.526, 5133.815]
+        scaler.scale_ = [110.723, 3745.034]
+        
+        scaler2 = StandardScaler()
+        scaler2.fit([[0,0,0,0]])
+
+        scaler2.mean_ = [106.665882,  10.781017, 106.665884,  10.781012]
+        scaler2.scale_ = [0.022315, 0.025133, 0.022316, 0.025130]
     else:
         ValueError("Wrong Dataset Name")
 
