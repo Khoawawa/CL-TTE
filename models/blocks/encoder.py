@@ -20,7 +20,7 @@ class ContrastiveEncoder(nn.Module):
             nn.Linear(d_model, d_model),
             nn.LayerNorm(d_model),
             nn.LeakyReLU(),
-            nn.Linear(d_model, d_model // 2)
+            nn.Linear(d_model, d_model)
         )
         self.loss = HardContrastiveLoss()
         
@@ -31,18 +31,16 @@ class ContrastiveEncoder(nn.Module):
         y_true = y_true.detach()
         B = y_true.size(0)
 
-        dist_orig = torch.abs(y_true.unsqueeze(0) - y_true.unsqueeze(1))
+        y_true = (y_true - y_true.mean()) / (y_true.std() + 1e-6)
         
+        dist = torch.abs(y_true.unsqueeze(0) - y_true.unsqueeze(1))
         mask = ~torch.eye(B, dtype=torch.bool, device=y_true.device)
-        dist_flat = dist_orig[mask]
-        
-        r = torch.quantile(dist_flat, self.r_percentile)
-        r = torch.clamp(r, min=1e-3)
+        r = torch.quantile(dist[mask], self.r_percentile).clamp(min=1e-3)
 
-        y_all = torch.cat([y_true, y_true], dim=0) 
-        dist = torch.abs(y_all.unsqueeze(0) - y_all.unsqueeze(1))
-        
-        pos_base = (dist <= r).float()
+        # expand to 2B
+        y_all = torch.cat([y_true, y_true], dim=0)
+        dist_all = torch.abs(y_all.unsqueeze(0) - y_all.unsqueeze(1))
+        pos_base = (dist_all <= r).float()
         pos_base.fill_diagonal_(0)
         
         pos_mask = torch.zeros(2 * B, 2 * B, device=y_true.device)
@@ -81,7 +79,8 @@ class ContrastiveEncoder(nn.Module):
         h = self.msm(x_pos,src_key_padding_mask)
         
         if self.training:
-            h_aug = self.msm(x_aug,src_key_padding_mask)
+            x_aug_pos = self.pos_enc(x_aug, src_key_padding_mask)
+            h_aug = self.msm(x_aug_pos,src_key_padding_mask)
             
             # pooling
             z = self.masked_mean_pooling(h,valid_mask) # (B, D)
@@ -93,7 +92,6 @@ class ContrastiveEncoder(nn.Module):
             
             # concat and normalize        
             z_all = torch.cat([z_proj,z_aug_proj],dim=0) # (2B, D // 2)
-            z_all = F.normalize(z_all, dim=-1)
             
             # create pos mask
             pos_mask = self.create_pos_mask(y_true)
@@ -107,20 +105,26 @@ class ContrastiveEncoder(nn.Module):
             
         return h, l_cl
 class SegmentEncoder(nn.Module):
-    def __init__(self,n_poi_groups, d_model=128):
+    def __init__(self,n_poi_groups, nlayers, d_model=128):
         
         super().__init__()
 
-        self.highwayembed = nn.Embedding(17, 6, padding_idx=0)
-        self.gpsembed = nn.Linear(4,16)
+        highway_dim = 6
+        gps_dim = 16
+        week_dim = 3
+        date_dim = 10
+        time_dim = 20
+        poi_dim = 32
         
-        self.weekembed = nn.Embedding(8, 3)
-        self.dateembed = PositionalEncoding1D(10)
-        self.timeembed = PositionalEncoding1D(d_model=20)
+        self.highwayembed = nn.Embedding(17, highway_dim, padding_idx=0)
+        self.gpsembed = nn.Linear(gps_dim,16)
         
-        self.poi_embed = PoiResGatedFilMEncoder(n_poi_groups=n_poi_groups, embed_dim=32, n_layers=2)
-        mlp_in_dim = 2 + 12 + 16 + 32 # = 2 + 6 + 16 + 32 // 8 = 
+        self.weekembed = nn.Embedding(8, week_dim)
+        self.dateembed = PositionalEncoding1D(date_dim)
+        self.timeembed = PositionalEncoding1D(d_model=time_dim)
         
+        self.poi_embed = PoiResGatedFilMEncoder(n_poi_groups=n_poi_groups, embed_dim=poi_dim, n_layers=nlayers)
+        mlp_in_dim = 2 + highway_dim + gps_dim + poi_dim # = 2 + 6 + 16 + 32 // 8 =
         self.datetime_dim = 3 + 10 + 20
         
         self.represent = nn.Sequential(

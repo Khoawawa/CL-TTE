@@ -114,18 +114,17 @@ class MSM(nn.Module):
             batch_first=True,
             norm_first=True
         )
+        norm = nn.LayerNorm(d_model)
         self.transformer_encoder = nn.TransformerEncoder(
             enc_layer,
-            num_layers=nlayer
+            num_layers=nlayer,
+            norm=norm
         )
-        self.after_norm = nn.LayerNorm(d_model)
         
     def forward(self, x, src_key_padding_mask=None):
         # x: (B, T, D) features after segment encoder
         
         x = self.pos_enc(x, src_key_padding_mask)  # (B, T, D)
         h = self.transformer_encoder(x, src_key_padding_mask=src_key_padding_mask)  # (B, T, D)
-        h = self.after_norm(h)  # (B, T, D)
-        
         return h
     

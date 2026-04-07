@@ -2,25 +2,32 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from models.blocks.encoder import SegmentEncoder, ContrastiveEncoder
-from models.blocks.anticipator import GRUAnticipator
-from models.loss.contrastive_loss import SoftContrastiveLoss
-from models.base.PositionalEncoding import PositionalEncodingIndex
+from models.blocks.LayerNormGRU import LayerNormGRU
 
+    
 class Cl_TTE(nn.Module):
-    def __init__(self, d_model, nhead, seq_layer,temperature=0.1, sigma_percent=0.1,n_poi_groups=9):
+    def __init__(self, d_model, nhead, seq_layer, r_percentile=0.2,n_poi_groups=9):
         super().__init__()
+        
         self.d_model = d_model
-        self.temperature = temperature
         assert seq_layer >= 2, "seq_layer should be at least 2 to have separate layers for mapping and anticipation"
-        # segment encoding
-        self.enc = SegmentEncoder(d_model=d_model, n_poi_groups=n_poi_groups)
-        # contrastive learning
-        self.contrast_enc = ContrastiveEncoder(d_model=d_model)
         
-        self.anticipator = GRUAnticipator(d_model=d_model, num_layers=seq_layer // 2)
+        # SEGMENT ENCODER
+        self.enc = SegmentEncoder(d_model=d_model, n_poi_groups=n_poi_groups, nlayers=seq_layer)
         
+        # CONTRASTIVE BLOCK
+        self.contrast_enc = ContrastiveEncoder(d_model=d_model,nlayer=seq_layer,nhead=nhead,r_percentile=r_percentile)
+        self.alpha_h = nn.Parameter(torch.tensor(0.2))
+        
+        # TEMPORAL BLOCK
+        self.post_norm = nn.LayerNorm(d_model)
+        self.temporal_block = LayerNormGRU(input_dim=d_model, hidden_dim=d_model, num_layers=seq_layer)
+        
+        # ATTENTION POOLING
+        self.attn = nn.MultiheadAttention(d_model, nhead, dropout=0.1, batch_first=True)
+        
+        # REGRESSION
         mlp_in_dim = d_model + self.enc.datetime_dim
-        
         self.pre_regression_norm = nn.LayerNorm(d_model)
         self.regression_mlp = nn.Sequential(
             nn.Linear(mlp_in_dim, mlp_in_dim//2),
@@ -28,32 +35,12 @@ class Cl_TTE(nn.Module):
             nn.Linear(mlp_in_dim//2, 1)
         )
         
-        self.cls_token = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
-        
-        self.contrastive_mlp = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.LayerNorm(d_model),
-            nn.ReLU(),
-            nn.Linear(d_model, d_model//2)
-        )
-        
-        
-    def regression_branch(self, z, start_time):
-        z_time = torch.concat([z, start_time], dim=-1) # (B,D + 33)
-        return self.regression_mlp(z_time)
-
-    def contrastive_branch(self, z, y_true):
-        with torch.amp.autocast('cuda',enabled=False):
-            z_proj = F.normalize(self.contrastive_mlp(z), dim=-1) # (B, D//2)
-            loss = self.contrastive_loss(z_proj.float(), y_true.float())
-        return loss
-        
     def forward(self, inputs, y_true):
         # inputs: 
-        # links: [B, T, 8] -> (highway1, highway2, len, culm_len, start_lat, start_lon, end_lat, end_lon)
+        # links: [B, T, 17] -> (highway1, highway2, len, culm_len, start_lat, start_lon, end_lat, end_lon, POI*9)
         # dateinfo : [B, 3]
-        # valid_mask: [B, T] 
         # lens: [B]
+        
         links = inputs['links']
         dateinfo = inputs['dateinfo']
         lens = inputs['lens']
@@ -68,33 +55,24 @@ class Cl_TTE(nn.Module):
         # CONTRASTIVE LEARNING
         h_cl, l_cl = self.contrast_enc(segment_rep_ori, segment_rep_ori, src_key_padding_mask=padding_mask, y_true=y_true)
         
+        # GATED RESIDUAL CONNECTION
+        gate = torch.sigmoid(self.alpha_h)
+        h = self.post_norm(segment_rep_ori + gate * h_cl.detach())
         
-        # cls token preparation
-        B, _, _ = segment_rep_ori.shape
-        cls_tokens = self.cls_token.expand(B, -1, -1)  # (B, 1, D)
-        segment_rep = torch.cat([cls_tokens, segment_rep_ori], dim=1)  # (B, T+1, D)
-        padding_mask_with_cls = torch.cat([torch.zeros(B, 1, dtype=torch.bool, device=padding_mask.device), padding_mask], dim=1)
+        # TEMPORAL ENCODING
+        h = h.transpose(0,1).contiguous() # (T, B, D)
+        h,_ = self.temporal_block(h, lens) # (B, T, D)
+        h = h.transpose(0,1).contiguous()
         
-        # LEARNING THE MAP OF THE TRAJECTORY
-        map_memo = self.mapper(segment_rep, src_key_padding_mask=padding_mask_with_cls) # (B, 1 + T, D)
+        # ATTENTION POOLING
+        h_attn = self.attn(h, h, h, key_padding_mask=padding_mask)[0] # (B, T, D)
         
-        # get the CLS token representation as the global representation of the trajectory
-        z_map = map_memo[:, 0, :] # (B, D) CLS token representation
+        z =  (h_attn * segment_mask.unsqueeze(-1)).sum(dim=1) # (B, D)
         
-        # contrastive learning branch
-        if self.training:
-            l_cl = self.contrastive_branch(z_map, y_true)
-        else:
-            l_cl = None
-            
-        # Driver anticipation
-        z_map = z_map.detach() # (B, D) CLS token representation
-        h_final = self.anticipator(map_memo[:, 1:, :], z_map, lens)  # (B, D)
-        
-        h_final = self.pre_regression_norm(h_final)
-        
-        # LINEAR REGRESSION
-        t = self.regression_branch(h_final, datetimerep)  # (B, 1)
+        # REGRESSION
+        z = self.pre_regression_norm(z)
+        z_time = torch.concat([z, datetimerep], dim=-1) # (B,D + 33)
+        t = self.regression_mlp(z_time) # (B, 1)
         
         return t, l_cl
     

@@ -2,7 +2,7 @@
     "CL_TTE":{
         "d_model": 128,
         "nhead": 8,
-        "nlayer": 4
+        "seqlayer": 4
     },
     "GRU_CL_TTE":{
         "d_model": 128,

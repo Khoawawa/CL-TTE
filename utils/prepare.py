@@ -280,8 +280,11 @@ def create_model(args):
     absPath = os.path.join(os.path.dirname(__file__), "model_config.json")
     with open(absPath) as file:
         model_config = json.load(file)[args.model]
+        
     args.model_config = model_config
-    args.model_config['n_poi_groups']
+    args.model_config['n_poi_groups'] = args.data_config["n_poi_groups"]
+    args.model_config['r_percentile'] = args.data_config["r_percentile"]
+    
     return Cl_TTE(**model_config)
         
 
