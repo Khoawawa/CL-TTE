@@ -10,8 +10,33 @@ class ContrastiveEncoder(nn.Module):
     def __init__(self, d_model, nhead, dropout=0.1, nlayer=4):
         super().__init__()
         self.msm = MSM(d_model,nhead,dropout,nlayer)
-    def create_pos_mask(self, x, src_key_padding_mask=None):
+    def create_pos_mask(self, x, y_true, r_percentile=0.2):
+        if y_true.dim() == 2:
+            y_true = y_true.squeeze(-1)
+        y_true = y_true.detach()
+        B = y_true.size(0)
+
+        dist_orig = torch.abs(y_true.unsqueeze(0) - y_true.unsqueeze(1))
+        mask = ~torch.eye(B, dtype=torch.bool, device=y_true.device)
+        dist_flat = dist_orig[mask]
         
+        r = torch.quantile(dist_flat, r_percentile)
+        r = torch.clamp(r, min=1e-3)
+
+        y_all = torch.cat([y_true, y_true], dim=0) 
+        dist = torch.abs(y_all.unsqueeze(0) - y_all.unsqueeze(1))
+        
+        pos_mask = (dist <= r).float()
+        pos_mask.fill_diagonal_(0)
+
+        num_pos = pos_mask.sum(dim=1)
+        if (num_pos == 0).any():
+            dist_no_self = dist + torch.eye(dist.size(0), device=dist.device) * 1e4
+            nn_idx = dist_no_self.argmin(dim=1)
+            pos_mask[torch.arange(dist.size(0)), nn_idx] = 1.0
+
+        return pos_mask
+    
     def forward(self, x, src_key_padding_mask=None):
         return self.msm(x, src_key_padding_mask)
 class SegmentEncoder(nn.Module):
