@@ -12,6 +12,41 @@ from utils.util import StandardScaler2
 from models.main_model import Cl_TTE
 import ast
 highway = {'<PAD>': 0, 'unclassified': 1, 'busway': 2, 'crossing': 3, 'living_street': 4, 'motorway': 5, 'motorway_link': 6, 'primary': 7, 'primary_link': 8, 'residential': 9, 'road': 10, 'secondary': 11, 'secondary_link': 12, 'tertiary': 13, 'tertiary_link': 14, 'trunk': 15, 'trunk_link': 16}
+def augment_segments(seg, n_poi_groups,
+                     p_highway=0.2,
+                     p_poi=0.35,
+                     p_seg=0.12):
+
+    seg = seg.copy()  # (T, F)
+
+    # --- Highway dropout ---
+    highway = seg[:, :2]
+    mask_hw = np.random.rand(*highway.shape) < p_highway
+    highway[mask_hw] = 1  # unclassified
+    seg[:, :2] = highway
+
+    # --- POI dropout ---
+    poi = seg[:, 8:]
+    mask_poi = np.random.rand(*poi.shape) < p_poi
+    poi = poi * (~mask_poi)
+    seg[:, 8:] = poi
+
+    # --- Segment dropout (feature masking, NOT removal) ---
+    T = seg.shape[0]
+    seg_mask = np.random.rand(T) < p_seg
+
+    # prevent full collapse
+    if seg_mask.all():
+        seg_mask[np.random.randint(T)] = False
+
+    for i in range(T):
+        if seg_mask[i]:
+            seg[i, 0:2] = 1        # highway → unclassified
+            seg[i, 4:8] *= 0.3     # GPS  
+            seg[i, 8:]  *= 0.3     # POI 
+            # KEEP length (2) and cumlen (3)
+
+    return seg
 
 def parse_highway_tags(raw_val, max_tags=2):
     """Converts OSM strings/lists to a fixed-size list of IDs."""
@@ -94,19 +129,31 @@ def collate_func(data, args, info_all):
     # Scale: GPS (idx 4 to 7)
     all_segments[:, 4:8] = scaler2.transform(all_segments[:, 4:8])
 
+    all_segments = np.nan_to_num(all_segments, 0.0)
+    all_segments[:, 8:] = np.maximum(all_segments[:, 8:], 0)
     # 5. Final Padded Tensor Construction
     # Shape: [Batch, Max_Seq, 8] 
     # Features: [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2]
     feature_dim = all_segments.shape[1]
-    padded = np.zeros((len(data), max_seq_len, feature_dim), dtype=np.float32)
+    padded_clean = np.zeros((len(data), max_seq_len, feature_dim), dtype=np.float32)
+    padded_aug   = np.zeros_like(padded_clean)
     
     curr_idx = 0
     for i, l in enumerate(lens):
-        padded[i, :l] = all_segments[curr_idx : curr_idx + l]
+        seg = all_segments[curr_idx : curr_idx + l]
+
+        # clean view
+        padded_clean[i, :l] = seg
+
+        # augmented view
+        seg_aug = augment_segments(seg, n_poi_groups)
+        padded_aug[i, :l] = seg_aug
+
         curr_idx += l
     
     return {
-        'links': torch.from_numpy(padded),
+        'links_clean': torch.from_numpy(padded_clean),
+        'links_aug': torch.from_numpy(padded_aug),
         'dateinfo': torch.from_numpy(np.asarray(dateinfo, dtype=np.float32)),
         'lens': torch.LongTensor(lens), 
         'inds': inds, 

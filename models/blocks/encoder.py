@@ -5,6 +5,15 @@ import torch.nn as nn
 from models.base.PositionalEncoding import CyclicalTimeEncoding, PositionalEncoding1D
 from models.blocks.cl import MSM, ReCo
 from models.blocks.poi import PoiResGatedFilMEncoder
+
+class ContrastiveEncoder(nn.Module):
+    def __init__(self, d_model, nhead, dropout=0.1, nlayer=4):
+        super().__init__()
+        self.msm = MSM(d_model,nhead,dropout,nlayer)
+    def create_pos_mask(self, x, src_key_padding_mask=None):
+        
+    def forward(self, x, src_key_padding_mask=None):
+        return self.msm(x, src_key_padding_mask)
 class SegmentEncoder(nn.Module):
     def __init__(self,n_poi_groups, d_model=128):
         

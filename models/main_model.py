@@ -1,18 +1,21 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.blocks.encoder import SegmentEncoder
+from models.blocks.encoder import SegmentEncoder, ContrastiveEncoder
 from models.blocks.anticipator import GRUAnticipator
 from models.loss.contrastive_loss import SoftContrastiveLoss
 from models.base.PositionalEncoding import PositionalEncodingIndex
+
 class Cl_TTE(nn.Module):
-    def __init__(self, d_model, nhead, seq_layer,temperature=0.1, sigma_percent=0.1):
+    def __init__(self, d_model, nhead, seq_layer,temperature=0.1, sigma_percent=0.1,n_poi_groups=9):
         super().__init__()
         self.d_model = d_model
         self.temperature = temperature
         assert seq_layer >= 2, "seq_layer should be at least 2 to have separate layers for mapping and anticipation"
         # segment encoding
-        self.enc = SegmentEncoder(d_model)
+        self.enc = SegmentEncoder(d_model=d_model, n_poi_groups=n_poi_groups)
+        # contrastive learning
+        self.contrast_enc = ContrastiveEncoder(d_model=d_model)
         
         self.positional_encoder = PositionalEncodingIndex(d_model=d_model)
         # map
