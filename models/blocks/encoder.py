@@ -130,7 +130,7 @@ class SegmentEncoder(nn.Module):
             embed_dim=poi_dim,
             n_layers=nlayers
         )
-        mlp_in_dim = 2 + highway_dim + gps_dim + poi_dim # = 2 + 6 + 16 + 32 // 8 =
+        mlp_in_dim = 2 + 2 *highway_dim + gps_dim + poi_dim # 
         
         
         self.represent = nn.Sequential(
