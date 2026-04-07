@@ -3,14 +3,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class PoiResGatedFilMEncoder(nn.Module):
-    def __init__(self, n_poi_groups, embed_dim=32, n_layers=2):
+    def __init__(self, n_poi_groups, time_dim,embed_dim=32, n_layers=2):
         super().__init__()
         # the last embedding is for no poi presence
         self.poi_embed = nn.Embedding(n_poi_groups + 1, embed_dim, padding_idx=0)
         
         self.layers = nn.ModuleList([
             nn.ModuleDict({
-                "film": ResidualGatedFiLM(embed_dim, embed_dim),
+                "film": ResidualGatedFiLM(time_dim, embed_dim),
                 "ffn": nn.Sequential(
                     nn.Linear(embed_dim, embed_dim * 2),
                     nn.GELU(),
