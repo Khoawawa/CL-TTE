@@ -87,7 +87,7 @@ def collate_func(data, args, info_all):
         dateinfo.append([wday, doy_norm, minute_norm])
         inds.append(l[0])
     
-    lens = np.asarray([len(k) for k in linkids], dtype=np.int16)
+    lens = np.array([len(k) for k in linkids])
     max_seq_len = lens.max()
     def get_infos(xs):
         infos = []
@@ -140,6 +140,8 @@ def collate_func(data, args, info_all):
     
     curr_idx = 0
     for i, l in enumerate(lens):
+        if curr_idx + l > len(all_segments):
+            print(f"Overflow or mismatch: curr_idx={curr_idx}, l={l}, total={len(all_segments)}")
         seg = all_segments[curr_idx : curr_idx + l]
         
         if seg.shape[0] != l:
