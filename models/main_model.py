@@ -51,15 +51,17 @@ class Cl_TTE(nn.Module):
         padding_mask = ~segment_mask
         
         # ENCODING THE SEGMENTS
-        segment_rep, datetimerep = self.enc(links_clean,dateinfo)  # (B, T, D)
-        segment_rep_aug, _ = self.enc(links_aug,dateinfo)  # (B, T, D)
+        links = torch.cat([links_clean, links_aug], dim=1) # (B, 2T, 17)
+        segment_rep, datetimerep = self.enc(links,dateinfo)  # (B, 2T, D)
+        
+        segment_rep_clean, segment_rep_aug = torch.chunk(segment_rep, 2, dim=1) # (B, T, D)
         
         # CONTRASTIVE LEARNING
-        h_cl, l_cl = self.contrast_enc(segment_rep, segment_rep_aug, src_key_padding_mask=padding_mask, y_true=y_true)
+        h_cl, l_cl = self.contrast_enc(segment_rep_clean, segment_rep_aug, src_key_padding_mask=padding_mask, y_true=y_true)
         
         # GATED RESIDUAL CONNECTION
         gate = torch.sigmoid(self.alpha_h)
-        h = self.post_norm(segment_rep + gate * h_cl.detach())
+        h = self.post_norm(segment_rep_clean + gate * h_cl.detach())
         
         # TEMPORAL ENCODING
         h = h.transpose(0,1).contiguous() # (T, B, D)
