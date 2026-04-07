@@ -41,7 +41,8 @@ class Cl_TTE(nn.Module):
         # dateinfo : [B, 3]
         # lens: [B]
         
-        links = inputs['links']
+        links_clean = inputs['links_clean']
+        links_aug = inputs['links_aug']
         dateinfo = inputs['dateinfo']
         lens = inputs['lens']
         
@@ -50,14 +51,15 @@ class Cl_TTE(nn.Module):
         padding_mask = ~segment_mask
         
         # ENCODING THE SEGMENTS
-        segment_rep_ori, datetimerep = self.enc(links,dateinfo)  # (B, T, D)
+        segment_rep, datetimerep = self.enc(links_clean,dateinfo)  # (B, T, D)
+        segment_rep_aug, _ = self.enc(links_aug,dateinfo)  # (B, T, D)
         
         # CONTRASTIVE LEARNING
-        h_cl, l_cl = self.contrast_enc(segment_rep_ori, segment_rep_ori, src_key_padding_mask=padding_mask, y_true=y_true)
+        h_cl, l_cl = self.contrast_enc(segment_rep, segment_rep_aug, src_key_padding_mask=padding_mask, y_true=y_true)
         
         # GATED RESIDUAL CONNECTION
         gate = torch.sigmoid(self.alpha_h)
-        h = self.post_norm(segment_rep_ori + gate * h_cl.detach())
+        h = self.post_norm(segment_rep + gate * h_cl.detach())
         
         # TEMPORAL ENCODING
         h = h.transpose(0,1).contiguous() # (T, B, D)
