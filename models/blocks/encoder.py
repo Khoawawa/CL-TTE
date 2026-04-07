@@ -115,6 +115,7 @@ class SegmentEncoder(nn.Module):
         date_dim = 10
         time_dim = 20
         poi_dim = 32
+        self.datetime_dim = week_dim + date_dim + time_dim
         
         self.highwayembed = nn.Embedding(17, highway_dim, padding_idx=0)
         self.gpsembed = nn.Linear(4, gps_dim)
@@ -123,9 +124,14 @@ class SegmentEncoder(nn.Module):
         self.dateembed = PositionalEncoding1D(date_dim)
         self.timeembed = PositionalEncoding1D(d_model=time_dim)
         
-        self.poi_embed = PoiResGatedFilMEncoder(n_poi_groups=n_poi_groups, embed_dim=poi_dim, n_layers=nlayers)
+        self.poi_embed = PoiResGatedFilMEncoder(
+            n_poi_groups=n_poi_groups,
+            time_dim=self.datetime_dim,
+            embed_dim=poi_dim,
+            n_layers=nlayers
+        )
         mlp_in_dim = 2 + highway_dim + gps_dim + poi_dim # = 2 + 6 + 16 + 32 // 8 =
-        self.datetime_dim = 3 + 10 + 20
+        
         
         self.represent = nn.Sequential(
             nn.Linear(mlp_in_dim, mlp_in_dim * 2),
