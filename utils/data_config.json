@@ -1,23 +1,14 @@
 {
-  "porto": {
+  "hcm": {
     "data_dir": "mydata",
     "batch_size": 40,
     "collate_fn": "collate_func",
-    "time_mean": 638.7367947002926,
-    "time_std": 320.2971819500909,
-    "edges": 26529,
-    "edges_dir": "mydata/network_porto/porto_edges_new_simplify.pkl",
-    "nodes_dir": "mydata/network_porto/porto_nodes_new.pkl",
-    "poi_json": "",
-    "min_lat": 41.1406333,
-    "max_lat": 41.1858412,
-    "min_lon": -8.6886988,
-    "max_lon": -8.5559061,
-    "m": 5,
-    "grid_size": 0.001,
-    "gps_range": [41.1406333, -8.6886988, 41.1858412, -8.5559061],
-    "r_percentile": 0.2,
-    "noise": 0.1
+    "time_mean": 616.8322812104205,
+    "time_std": 333.53738287030507,
+    "edges_dir": "mydata/nwk_hcm/hcm_edges_poi_new_simplify.pkl",
+    "nodes_dir": "mydata/nwk_hcm/hcm_nodes_new.pkl",
+    "n_poi_groups": 10,
+    "gps_range": [106.6164137, 10.7301793, 106.7132954, 10.8524436]
   }
 
 }

@@ -12,6 +12,7 @@ from utils.util import StandardScaler2
 from models.main_model import Cl_TTE
 import ast
 highway = {'<PAD>': 0, 'unclassified': 1, 'busway': 2, 'crossing': 3, 'living_street': 4, 'motorway': 5, 'motorway_link': 6, 'primary': 7, 'primary_link': 8, 'residential': 9, 'road': 10, 'secondary': 11, 'secondary_link': 12, 'tertiary': 13, 'tertiary_link': 14, 'trunk': 15, 'trunk_link': 16}
+
 def parse_highway_tags(raw_val, max_tags=2):
     """Converts OSM strings/lists to a fixed-size list of IDs."""
     UNCLASSIFIED_ID = highway.get('unclassified', 1)
@@ -42,7 +43,7 @@ def collate_func(data, args, info_all):
     linkids = [np.asarray(l[1]) for l in data]
     dateinfo = []
     inds = []
-    
+    n_poi_groups = args.data_config['n_poi_groups'] 
     # 1. Date/Time Preprocessing
     for l in data:
         wday = int(l[2])
@@ -70,7 +71,8 @@ def collate_func(data, args, info_all):
                           nodeinfo[info[3]][0], nodeinfo[info[3]][1]]
             except:
                 infot += [0.0, 0.0, 0.0, 0.0]
-            
+            # poi features
+            infot += info[4:]
             infos.append(np.asarray(infot))
         return infos
 
@@ -87,7 +89,6 @@ def collate_func(data, args, info_all):
         all_segments.extend(seg_list)
     
     all_segments = np.array(all_segments)
-    
     # Scale: Length (idx 2), CumLen (idx 3)
     all_segments[:, 2:4] = scaler.transform(all_segments[:, 2:4])
     # Scale: GPS (idx 4 to 7)
@@ -96,7 +97,8 @@ def collate_func(data, args, info_all):
     # 5. Final Padded Tensor Construction
     # Shape: [Batch, Max_Seq, 8] 
     # Features: [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2]
-    padded = np.zeros((len(data), max_seq_len, 8), dtype=np.float32)
+    feature_dim = all_segments.shape[1]
+    padded = np.zeros((len(data), max_seq_len, feature_dim), dtype=np.float32)
     
     curr_idx = 0
     for i, l in enumerate(lens):
@@ -232,6 +234,7 @@ def create_model(args):
     with open(absPath) as file:
         model_config = json.load(file)[args.model]
     args.model_config = model_config
+    args.model_config['n_poi_groups']
     return Cl_TTE(**model_config)
         
 
