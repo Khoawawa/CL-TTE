@@ -141,9 +141,12 @@ def collate_func(data, args, info_all):
     curr_idx = 0
     for i, l in enumerate(lens):
         seg = all_segments[curr_idx : curr_idx + l]
-
-        # clean view
+        
+        if seg.shape[0] != l:
+            print(f"Mismatch at batch {i}: expected {l}, got {seg.shape[0]}")
+            
         padded_clean[i, :l] = seg
+        
 
         # augmented view
         seg_aug = augment_segments(seg, n_poi_groups)
