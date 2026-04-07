@@ -51,14 +51,21 @@ class Cl_TTE(nn.Module):
         padding_mask = ~segment_mask
         
         # ENCODING THE SEGMENTS
+        
         links = torch.cat([links_clean, links_aug], dim=1) # (B, 2T, 17)
         segment_rep, datetimerep = self.enc(links,dateinfo)  # (B, 2T, D)
         
         segment_rep_clean, segment_rep_aug = torch.chunk(segment_rep, 2, dim=1) # (B, T, D)
         
         # CONTRASTIVE LEARNING
-        with torch.
-        h_cl, l_cl = self.contrast_enc(segment_rep_clean, segment_rep_aug, src_key_padding_mask=padding_mask, y_true=y_true)
+        with torch.amp.autocast('cuda',enabled=False):
+            h_cl, l_cl = self.contrast_enc(
+                segment_rep_clean, 
+                segment_rep_aug, 
+                src_key_padding_mask=padding_mask, 
+                y_true=y_true
+            )
+
         
         # GATED RESIDUAL CONNECTION
         gate = torch.sigmoid(self.alpha_h)
