@@ -1,6 +1,42 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
+class HardContrastiveLoss(nn.Module):
+    def __init__(self, temperature=0.1):
+        super().__init__()
+        self.temperature = temperature
+        
+    def forward(self, z, positive_mask):
+        z = F.normalize(z, dim=-1, eps=1e-8).float()
+        
+        # 2. Similarity
+        sim = torch.matmul(z, z.T) / self.temperature 
+        
+        # 3. Stability trick
+        sim = sim - sim.max(dim=1, keepdim=True)[0]
+
+        # 4. Create boolean masks
+        logits_mask = ~torch.eye(sim.size(0), dtype=torch.bool, device=sim.device)
+        pos_mask_bool = positive_mask.bool()
+
+        # 5. Fast PyTorch Masking (-1e9 completely removes them from logsumexp)
+        # Denominator: All pairs EXCEPT self
+        sim_denom = sim.masked_fill(~logits_mask, -1e4)
+        log_denom = torch.logsumexp(sim_denom, dim=1)
+
+        # Numerator: ONLY positive pairs
+        sim_num = sim.masked_fill(~pos_mask_bool, -1e4)
+        log_num = torch.logsumexp(sim_num, dim=1)
+
+        # 6. Loss
+        loss = -(log_num - log_denom)
+
+        # ---- FINAL SAFETY ----
+        loss = torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))
+
+        return loss.mean()
+    
 class SoftContrastiveLoss(nn.Module):
     def __init__(self, temperature=0.1, sigma_percent=0.1, distance_metric='absolute'):
         super().__init__()

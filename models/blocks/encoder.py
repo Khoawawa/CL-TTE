@@ -2,43 +2,110 @@ import math
 
 import torch
 import torch.nn as nn
-from models.base.PositionalEncoding import CyclicalTimeEncoding, PositionalEncoding1D
-from models.blocks.cl import MSM, ReCo
+import torch.nn.functional as F
+from models.base.PositionalEncoding import PositionalEncoding1D, PositionalEncodingIndex
+from models.loss.contrastive_loss import HardContrastiveLoss
+from models.blocks.cl import MSM
 from models.blocks.poi import PoiResGatedFilMEncoder
 
 class ContrastiveEncoder(nn.Module):
-    def __init__(self, d_model, nhead, dropout=0.1, nlayer=4):
+    def __init__(self, d_model, nhead, r_percentile, dropout=0.1, nlayer=4):
         super().__init__()
+        self.r_percentile = r_percentile
+        
+        self.pos_enc = PositionalEncodingIndex(d_model)
         self.msm = MSM(d_model,nhead,dropout,nlayer)
-    def create_pos_mask(self, x, y_true, r_percentile=0.2):
+        
+        self.proj = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.LayerNorm(d_model),
+            nn.LeakyReLU(),
+            nn.Linear(d_model, d_model // 2)
+        )
+        self.loss = HardContrastiveLoss()
+        
+    def create_pos_mask(self, y_true):
+        # y_true: (B, T)
         if y_true.dim() == 2:
             y_true = y_true.squeeze(-1)
         y_true = y_true.detach()
         B = y_true.size(0)
 
         dist_orig = torch.abs(y_true.unsqueeze(0) - y_true.unsqueeze(1))
+        
         mask = ~torch.eye(B, dtype=torch.bool, device=y_true.device)
         dist_flat = dist_orig[mask]
         
-        r = torch.quantile(dist_flat, r_percentile)
+        r = torch.quantile(dist_flat, self.r_percentile)
         r = torch.clamp(r, min=1e-3)
 
         y_all = torch.cat([y_true, y_true], dim=0) 
         dist = torch.abs(y_all.unsqueeze(0) - y_all.unsqueeze(1))
         
-        pos_mask = (dist <= r).float()
-        pos_mask.fill_diagonal_(0)
-
-        num_pos = pos_mask.sum(dim=1)
-        if (num_pos == 0).any():
-            dist_no_self = dist + torch.eye(dist.size(0), device=dist.device) * 1e4
-            nn_idx = dist_no_self.argmin(dim=1)
-            pos_mask[torch.arange(dist.size(0)), nn_idx] = 1.0
+        pos_base = (dist <= r).float()
+        pos_base.fill_diagonal_(0)
+        
+        pos_mask = torch.zeros(2 * B, 2 * B, device=y_true.device)
+        # ori to ori
+        pos_mask[:B, :B] = pos_base
+        # aug inherit ori
+        pos_mask[B:, :B] = pos_base
+        # identity pair
+        idx = torch.arange(B, device=y_true.device)
+        pos_mask[idx, idx + B] = 1.0
+        pos_mask[idx + B, idx] = 1.0
 
         return pos_mask
     
-    def forward(self, x, src_key_padding_mask=None):
-        return self.msm(x, src_key_padding_mask)
+    def masked_mean_pooling(self, x, mask):
+        # x: (B, T, D)
+        # mask: (B, T) with 1 = valid, 0 = padding
+        mask = mask.float()
+        # sum
+        x_sum = torch.einsum('btd,bt->bd', x, mask)
+        # count valid tokens
+        denom = mask.sum(dim=1, keepdim=True)  # (B, 1)
+        # avoid division by zero
+        denom = denom.clamp(min=1.0)
+        return x_sum / denom
+    
+    def forward(self,x,x_aug,src_key_padding_mask=None,y_true=None):
+        # x: (B, T, D)
+        # x_aug: (B, T, D)
+        if src_key_padding_mask is None:
+            valid_mask = torch.ones(x.size(0), x.size(1), dtype=torch.bool, device=x.device)
+        else:
+            valid_mask = ~src_key_padding_mask
+        # encode
+        x_pos = self.pos_enc(x, src_key_padding_mask)
+        h = self.msm(x_pos,src_key_padding_mask)
+        
+        if self.training:
+            h_aug = self.msm(x_aug,src_key_padding_mask)
+            
+            # pooling
+            z = self.masked_mean_pooling(h,valid_mask) # (B, D)
+            z_aug = self.masked_mean_pooling(h_aug,valid_mask) # (B, D)
+            
+            # projection
+            z_proj = self.proj(z)
+            z_aug_proj = self.proj(z_aug)
+            
+            # concat and normalize        
+            z_all = torch.cat([z_proj,z_aug_proj],dim=0) # (2B, D // 2)
+            z_all = F.normalize(z_all, dim=-1)
+            
+            # create pos mask
+            pos_mask = self.create_pos_mask(y_true)
+            
+            # contrastive learning
+            l_cl = self.loss(z_all,pos_mask)
+            
+        else:
+            l_cl = None
+        
+            
+        return h, l_cl
 class SegmentEncoder(nn.Module):
     def __init__(self,n_poi_groups, d_model=128):
         

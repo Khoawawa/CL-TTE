@@ -17,12 +17,6 @@ class Cl_TTE(nn.Module):
         # contrastive learning
         self.contrast_enc = ContrastiveEncoder(d_model=d_model)
         
-        self.positional_encoder = PositionalEncodingIndex(d_model=d_model)
-        # map
-        encoder_final_norm = nn.LayerNorm(d_model)
-        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True, norm_first=True)
-        self.mapper = nn.TransformerEncoder(encoder_layer, num_layers=seq_layer, norm=encoder_final_norm)
-        # temporal modeling
         self.anticipator = GRUAnticipator(d_model=d_model, num_layers=seq_layer // 2)
         
         mlp_in_dim = d_model + self.enc.datetime_dim
@@ -43,7 +37,6 @@ class Cl_TTE(nn.Module):
             nn.Linear(d_model, d_model//2)
         )
         
-        self.contrastive_loss = SoftContrastiveLoss(temperature=temperature, sigma_percent=sigma_percent, distance_metric='relative')
         
     def regression_branch(self, z, start_time):
         z_time = torch.concat([z, start_time], dim=-1) # (B,D + 33)
@@ -72,8 +65,9 @@ class Cl_TTE(nn.Module):
         # ENCODING THE SEGMENTS
         segment_rep_ori, datetimerep = self.enc(links,dateinfo)  # (B, T, D)
         
-        # positional encoding
-        segment_rep_ori = self.positional_encoder(segment_rep_ori, padding_mask=padding_mask) # (B, T, D)
+        # CONTRASTIVE LEARNING
+        h_cl, l_cl = self.contrast_enc(segment_rep_ori, segment_rep_ori, src_key_padding_mask=padding_mask, y_true=y_true)
+        
         
         # cls token preparation
         B, _, _ = segment_rep_ori.shape
