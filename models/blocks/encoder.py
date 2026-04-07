@@ -117,7 +117,7 @@ class SegmentEncoder(nn.Module):
         poi_dim = 32
         
         self.highwayembed = nn.Embedding(17, highway_dim, padding_idx=0)
-        self.gpsembed = nn.Linear(gps_dim,16)
+        self.gpsembed = nn.Linear(4, gps_dim)
         
         self.weekembed = nn.Embedding(8, week_dim)
         self.dateembed = PositionalEncoding1D(date_dim)
