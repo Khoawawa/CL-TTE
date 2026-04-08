@@ -36,22 +36,25 @@ class ContrastiveEncoder(nn.Module):
         dist = torch.abs(y_true.unsqueeze(0) - y_true.unsqueeze(1))
         mask = ~torch.eye(B, dtype=torch.bool, device=y_true.device)
         r = torch.quantile(dist[mask], self.r_percentile).clamp(min=1e-3)
-
-        # expand to 2B
-        y_all = torch.cat([y_true, y_true], dim=0)
-        dist_all = torch.abs(y_all.unsqueeze(0) - y_all.unsqueeze(1))
-        pos_base = (dist_all <= r).float()
+        pos_base = (dist <= r).float()   # (B, B)
         pos_base.fill_diagonal_(0)
-        
-        pos_mask = torch.zeros(2 * B, 2 * B, device=y_true.device)
-        # ori to ori
+        # expand to 2B
+        pos_mask = torch.zeros(2*B, 2*B, device=y_true.device)
+
+        # ori ↔ ori
         pos_mask[:B, :B] = pos_base
-        # aug inherit ori
+
+        # aug inherits ori
         pos_mask[B:, :B] = pos_base
-        # identity pair
+        pos_mask[:B, B:] = pos_base
+
+        # DO NOT include aug ↔ aug
+        # pos_mask[B:, B:] = 0
+
+        # identity pairs (strong positives)
         idx = torch.arange(B, device=y_true.device)
-        pos_mask[idx, idx + B] = 1.0
-        pos_mask[idx + B, idx] = 1.0
+        pos_mask[idx, idx+B] = 1.0
+        pos_mask[idx+B, idx] = 1.0
 
         return pos_mask
     
