@@ -127,13 +127,13 @@ class SegmentEncoder(nn.Module):
         self.dateembed = PositionalEncoding1D(date_dim)
         self.timeembed = PositionalEncoding1D(d_model=time_dim)
         
-        self.poi_embed = PoiResGatedFilMEncoder(
-            n_poi_groups=n_poi_groups,
-            time_dim=self.datetime_dim,
-            embed_dim=poi_dim,
-            n_layers=nlayers
-        )
-        mlp_in_dim = 2 + 2 *highway_dim + gps_dim + poi_dim # 
+        # self.poi_embed = PoiResGatedFilMEncoder(
+        #     n_poi_groups=n_poi_groups,
+        #     time_dim=self.datetime_dim,
+        #     embed_dim=poi_dim,
+        #     n_layers=nlayers
+        # )
+        mlp_in_dim = 2 + 2 *highway_dim + gps_dim #+ poi_dim # 
         
         
         self.represent = nn.Sequential(
@@ -163,8 +163,16 @@ class SegmentEncoder(nn.Module):
         gpsrep = torch.tanh(self.gpsembed(links[:, :, 4:8].float())) # 16
         
         # poi features
-        poirep = self.poi_embed(links[:, :, 8:].float(), datetimerep_expand)
-        features = torch.cat([links[..., 2:4], gpsrep,highwayrep, poirep], dim=-1) # 2 + 5 + 16 + 33 
+        # poirep = self.poi_embed(links[:, :, 8:].float(), datetimerep_expand)
+        features = torch.cat(
+            [
+                links[..., 2:4],
+                gpsrep,
+                highwayrep,
+                # poirep
+            ],
+            dim=-1
+        ) # 2 + 5 + 16 + 33 
         
         features_proj = self.represent(features) # (B,T,seq_hidden_dim)
         
