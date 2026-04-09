@@ -58,55 +58,57 @@ class ContrastiveEncoder(nn.Module):
 
         return pos_mask
     
-    def masked_mean_pooling(self, x, mask):
+    def masked_mean_pooling(self, x, pad_mask):
         # x: (B, T, D)
-        # mask: (B, T) with 1 = valid, 0 = padding
-        mask = mask.float()
+        # pad_mask: (B, T) with 0 = valid, 1 = padding
+        valid_mask = ~pad_mask
         # sum
-        x_sum = torch.einsum('btd,bt->bd', x, mask)
-        # count valid tokens
-        denom = mask.sum(dim=1, keepdim=True)  # (B, 1)
-        # avoid division by zero
-        denom = denom.clamp(min=1.0)
-        return x_sum / denom
+        x = x * valid_mask.unsqueeze(-1)
+        
+        denom = valid_mask.sum(dim=1, keepdim=True).clamp(min=1)  # (B, 1)
+        
+        return x.sum(dim=1) / denom
     
     def forward(self,x,x_aug,src_key_padding_mask=None,y_true=None):
         # x: (B, T, D)
         # x_aug: (B, T, D)
-        if src_key_padding_mask is None:
-            valid_mask = torch.ones(x.size(0), x.size(1), dtype=torch.bool, device=x.device)
-        else:
-            valid_mask = ~src_key_padding_mask
-        # encode
-        x_pos = self.pos_enc(x, src_key_padding_mask)
-        h = self.msm(x_pos,src_key_padding_mask)
         
+        B, T, D = x.shape
+        
+        if src_key_padding_mask is None:
+            pad_mask = torch.ones(x.size(0), x.size(1), dtype=torch.bool, device=x.device)
+        else:
+            pad_mask = src_key_padding_mask
+        # encode
         if self.training:
-            x_aug_pos = self.pos_enc(x_aug, src_key_padding_mask)
-            h_aug = self.msm(x_aug_pos,src_key_padding_mask)
             
-            # pooling
-            z = self.masked_mean_pooling(h,valid_mask) # (B, D)
-            z_aug = self.masked_mean_pooling(h_aug,valid_mask) # (B, D)
+            x_all = torch.cat([x,x_aug],dim=0) # (2B, T, D)
+            pad_mask_all = torch.cat([pad_mask,pad_mask],dim=0) # (2B, T)
             
-            # projection
-            z_proj = self.proj(z)
-            z_aug_proj = self.proj(z_aug)
+            x_all_pos = self.pos_enc(x_all, pad_mask_all)
             
-            # concat and normalize        
-            z_all = torch.cat([z_proj,z_aug_proj],dim=0) # (2B, D // 2)
+            h_all = self.msm(x_all_pos,pad_mask_all)
             
+            h = h_all[:B] # (B, T, D)
+            
+            z_all = self.masked_mean_pooling(h_all,pad_mask_all) # (2B, D)
+            
+            z_all_proj = self.proj(z_all)
             # create pos mask
             pos_mask = self.create_pos_mask(y_true)
             
             # contrastive learning
-            l_cl = self.loss(z_all,pos_mask)
+            l_cl = self.loss(z_all_proj, pos_mask)
             
         else:
+            x_pos = self.pos_enc(x, pad_mask)
+            h = self.msm(x_pos,pad_mask)
+            
             l_cl = None
         
             
         return h, l_cl
+    
 class SegmentEncoder(nn.Module):
     def __init__(self,n_poi_groups, nlayers, d_model=128):
         
@@ -143,10 +145,10 @@ class SegmentEncoder(nn.Module):
         )
         
     def forward(self, links, dateinfo): 
-        # links: (B, T, 17) [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2, poi*9]
+        # this should accomodate both original and augmented
+        # links: (B, 2T, 17) 2 * [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2, poi*9]
         # dateinfo: (B, 3)
-        # poi_counts: (B, T, n_poi_groups)
-        # lens: (B,)
+        # mask: (B, 2T)
         B, T, _ = links.shape
         
         weekrep   = self.weekembed(dateinfo[:, 0].long())
