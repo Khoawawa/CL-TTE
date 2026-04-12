@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models.blocks.encoder import SegmentEncoder, ContrastiveEncoder
 from models.blocks.LayerNormGRU import LayerNormGRU
-
+from models.profiler.profiler import BlockTimer
     
 class Cl_TTE(nn.Module):
     def __init__(self, d_model, nhead, seq_layer, r_percentile=0.2,n_poi_groups=9):
@@ -35,7 +35,7 @@ class Cl_TTE(nn.Module):
             nn.Linear(mlp_in_dim//2, 1)
         )
         
-    def forward(self, inputs, y_true):
+    def forward(self, inputs: torch.Tensor, y_true: torch.Tensor, profiler: BlockTimer=None):
         # inputs: 
         # links: [B, T, 17] -> (highway1, highway2, len, culm_len, start_lat, start_lon, end_lat, end_lon, POI*9)
         # dateinfo : [B, 3]
@@ -53,11 +53,14 @@ class Cl_TTE(nn.Module):
         # ENCODING THE SEGMENTS
         
         links = torch.cat([links_clean, links_aug], dim=1) # (B, 2T, 17)
-        segment_rep, datetimerep = self.enc(links,dateinfo)  # (B, 2T, D)
+        if profiler: profiler.start('enc')
+        segment_rep, datetimerep = self.enc(links,dateinfo, profiler)  # (B, 2T, D)
+        if profiler: profiler.stop()
         
         segment_rep_clean, segment_rep_aug = torch.chunk(segment_rep, 2, dim=1) # (B, T, D)
         
         # CONTRASTIVE LEARNING
+        if profiler: profiler.start('contrast')
         with torch.amp.autocast('cuda',enabled=False):
             h_cl, l_cl = self.contrast_enc(
                 segment_rep_clean, 
@@ -65,22 +68,24 @@ class Cl_TTE(nn.Module):
                 src_key_padding_mask=padding_mask, 
                 y_true=y_true
             )
-
+        if profiler: profiler.stop()
         
         # GATED RESIDUAL CONNECTION
         gate = torch.sigmoid(self.alpha_h)
         h = self.post_norm(segment_rep_clean + gate * h_cl.detach())
         
         # TEMPORAL ENCODING
+        if profiler: profiler.start('GRU')
         h = h.transpose(0,1).contiguous() # (T, B, D)
         h,_ = self.temporal_block(h, lens) # (B, T, D)
         h = h.transpose(0,1).contiguous()
-        
+        if profiler: profiler.stop()
         # ATTENTION POOLING
+        if profiler: profiler.start('attn pooling')
         h_attn = self.attn(h, h, h, key_padding_mask=padding_mask)[0] # (B, T, D)
         
         z =  (h_attn * segment_mask.unsqueeze(-1)).sum(dim=1) # (B, D)
-        
+        if profiler: profiler.stop()
         # REGRESSION
         z = self.pre_regression_norm(z)
         z_time = torch.concat([z, datetimerep], dim=-1) # (B,D + 33)

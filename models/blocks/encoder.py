@@ -8,6 +8,8 @@ from models.loss.contrastive_loss import HardContrastiveLoss
 from models.blocks.cl import MSM
 from models.blocks.poi import PoiResGatedFilMEncoder
 
+from models.profiler.profiler import BlockTimer
+
 class ContrastiveEncoder(nn.Module):
     def __init__(self, d_model, nhead, r_percentile, dropout=0.1, nlayer=4):
         super().__init__()
@@ -144,7 +146,7 @@ class SegmentEncoder(nn.Module):
             nn.Linear(mlp_in_dim * 2, d_model)
         )
         
-    def forward(self, links, dateinfo): 
+    def forward(self, links, dateinfo, profiler: BlockTimer=None): 
         # this should accomodate both original and augmented
         # links: (B, 2T, 17) 2 * [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2, poi*9]
         # dateinfo: (B, 3)
@@ -165,8 +167,10 @@ class SegmentEncoder(nn.Module):
         gpsrep = torch.tanh(self.gpsembed(links[:, :, 4:8].float())) # 16
         
         # poi features
+        if profiler: profiler.start('poi')
         poirep = self.poi_embed(links[:, :, 8:].float(), datetimerep_expand)
         features = torch.cat([links[..., 2:4], gpsrep,highwayrep, poirep], dim=-1) # 2 + 5 + 16 + 33 
+        if profiler: profiler.stop()
         
         features_proj = self.represent(features) # (B,T,seq_hidden_dim)
         
