@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from models.base.PositionalEncoding import PositionalEncoding1D, PositionalEncodingIndex
 from models.loss.contrastive_loss import HardContrastiveLoss
 from models.blocks.cl import MSM
-from models.blocks.poi import PoiResGatedFilMEncoder
+from models.blocks.poi import PoiEncoder, GlobalFiLM
 
 from models.profiler.profiler import BlockTimer
 
@@ -131,6 +131,7 @@ class SegmentEncoder(nn.Module):
         self.dateembed = PositionalEncoding1D(date_dim)
         self.timeembed = PositionalEncoding1D(d_model=time_dim)
         
+        self.poi_embed = PoiEncoder()
         self.poi_embed = PoiResGatedFilMEncoder(
             n_poi_groups=n_poi_groups,
             time_dim=self.datetime_dim,

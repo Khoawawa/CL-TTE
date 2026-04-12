@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models.blocks.encoder import SegmentEncoder, ContrastiveEncoder
 from models.blocks.LayerNormGRU import LayerNormGRU
+
+
 from models.profiler.profiler import BlockTimer
     
 class Cl_TTE(nn.Module):
