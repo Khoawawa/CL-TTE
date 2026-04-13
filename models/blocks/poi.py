@@ -57,7 +57,7 @@ class GlobalFiLM(nn.Module):
 
     def forward(self, x, time_embed):
         # x: (B, T, D)
-        # time_embed: (B, T,D_time)
+        # time_embed: (B,D_time)
 
         for layer in self.layers:
             x = layer["film"](x, time_embed)
