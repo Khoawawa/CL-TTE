@@ -34,53 +34,36 @@ class PoiEncoder(nn.Module):
         x = x.sum(dim=2)
         
         return self.proj(x)
-
 class GlobalFiLM(nn.Module):
-    def __init__(self, time_dim, repr_dim, num_layers):
+    def __init__(self, time_dim, embed_dim, n_layers):
         super().__init__()
         
-        self.norm = nn.LayerNorm(repr_dim, elementwise_affine=False)
         self.layers = nn.ModuleList([
             nn.ModuleDict({
-                "film": ResidualGatedFiLM(time_dim, repr_dim)
-                "ffn" : nn.Sequential(
-                    
-                )
-            }
-                 
-            )
-            for _ in range(num_layers)
+                "film": ResidualGatedFiLM(time_dim, embed_dim),
+                "ffn": nn.Sequential(
+                    nn.Linear(embed_dim, embed_dim * 2),
+                    nn.GELU(),
+                    nn.Linear(embed_dim * 2, embed_dim),
+                    nn.Dropout(0.1)
+                ),
+                "norm": nn.LayerNorm(embed_dim)
+            })
+            for _ in range(n_layers)
         ])
-        self.proj = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(time_dim, repr_dim * 3)
-        )
         
-        self.residual_weight = nn.Parameter(torch.zeros(1))
-        
-        # important: start as identity
-        nn.init.zeros_(self.proj[1].weight)
-        nn.init.zeros_(self.proj[1].bias)
+        self.post_norm = nn.LayerNorm(embed_dim)
+       
 
     def forward(self, x, time_embed):
         # x: (B, T, D)
-        # time_embed: (B, D_time)
+        # time_embed: (B, T,D_time)
 
-        gamma, beta, gate = self.proj(time_embed).chunk(3, dim=-1)
+        for layer in self.layers:
+            x = layer["film"](x, time_embed)
+            x = x + layer["ffn"](layer["norm"](x))
         
-        gamma = gamma.unsqueeze(1)  # (B,1,D)
-        beta  = beta.unsqueeze(1)
-        gate  = torch.sigmoid(gate).unsqueeze(1)
-
-        x_norm = self.norm(x)
-        
-        modulated = (1 + gamma) * x_norm + beta
-        
-        gated = gate * modulated + (1 - gate) * x_norm
-        
-        res_w = torch.sigmoid(self.residual_weight)
-        
-        return x + res_w * gated
+        return self.post_norm(x)
         
         
 class ResidualGatedFiLM(nn.Module):
@@ -97,18 +80,23 @@ class ResidualGatedFiLM(nn.Module):
         self.residual_weight = nn.Parameter(torch.zeros(1))
         nn.init.zeros_(self.proj[1].weight)
         nn.init.zeros_(self.proj[1].bias)
-    def forward(self, poi_embed, time_embed):
-        gamma, beta, gate = self.proj(time_embed).chunk(3, dim=-1)
+    def forward(self, x, time_embed):
+        # x: (B, T, D)
+        # time_embed: (B,D_time)
         
-        gamma = gamma.unsqueeze(2)
-        beta = beta.unsqueeze(2)
-        gate = torch.sigmoid(gate).unsqueeze(2)
+        gamma, beta, gate = self.proj(time_embed).chunk(3, dim=-1) # (B, D_time)
         
-        poi_norm = self.norm(poi_embed)
+        gamma = gamma.unsqueeze(1) # (B, 1, D_time)
+        beta = beta.unsqueeze(1) # (B, 1, D_time)
+        gate = torch.sigmoid(gate).unsqueeze(1) # (B, 1, D_time)
         
-        modulated = (1 + gamma) * poi_norm + beta
+        x_norm = self.norm(x)
         
-        gated = gate * modulated + (1 - gate) * poi_norm
+        modulated = (1 + gamma) * x_norm + beta
+        
+        gated = gate * modulated + (1 - gate) * x_norm
+        
         res_w = torch.sigmoid(self.residual_weight)
-        return poi_embed + res_w * gated # (B, T, n_pois, poi_dim)
+        
+        return x + res_w * gated # (B, T, n_pois, poi_dim)
 

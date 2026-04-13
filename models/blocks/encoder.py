@@ -131,20 +131,24 @@ class SegmentEncoder(nn.Module):
         self.dateembed = PositionalEncoding1D(date_dim)
         self.timeembed = PositionalEncoding1D(d_model=time_dim)
         
-        self.poi_embed = PoiEncoder()
-        self.poi_embed = PoiResGatedFilMEncoder(
+        self.poi_embed = PoiEncoder(
             n_poi_groups=n_poi_groups,
-            time_dim=self.datetime_dim,
-            embed_dim=poi_dim,
-            n_layers=nlayers
+            embed_dim=poi_dim
         )
-        mlp_in_dim = 2 + 2 *highway_dim + gps_dim + poi_dim # 
         
+        feature_dim = 2 + 2 *highway_dim + gps_dim + poi_dim # 
+        
+        # film modulator
+        self.film = GlobalFiLM(
+            time_dim=self.datetime_dim,
+            embed_dim=feature_dim,
+            num_layers=nlayers
+        )
         
         self.represent = nn.Sequential(
-            nn.Linear(mlp_in_dim, mlp_in_dim * 2),
+            nn.Linear(feature_dim, feature_dim * 2),
             nn.LeakyReLU(),
-            nn.Linear(mlp_in_dim * 2, d_model)
+            nn.Linear(feature_dim * 2, d_model)
         )
         
     def forward(self, links, dateinfo, profiler: BlockTimer=None): 
@@ -159,7 +163,6 @@ class SegmentEncoder(nn.Module):
         timerep   = self.timeembed(dateinfo[:, 2])
         
         datetimerep = torch.cat([weekrep, daterep, timerep], dim=-1)
-        datetimerep_expand = datetimerep.unsqueeze(1).expand(-1,T, -1) # (B,T,seq_hidden_dim)
         # spatial features
         highwayrep1 = self.highwayembed(links[:, :, 0].long()) # 6
         highwayrep2 = self.highwayembed(links[:, :, 1].long()) # 6
@@ -167,11 +170,12 @@ class SegmentEncoder(nn.Module):
         
         gpsrep = torch.tanh(self.gpsembed(links[:, :, 4:8].float())) # 16
         
-        # poi features
-        if profiler: profiler.start('poi')
-        poirep = self.poi_embed(links[:, :, 8:].float(), datetimerep_expand)
+        poirep = self.poi_embed(links[:, :, 8:].float())
+        
         features = torch.cat([links[..., 2:4], gpsrep,highwayrep, poirep], dim=-1) # 2 + 5 + 16 + 33 
-        if profiler: profiler.stop()
+        
+        # FILM CONDITIONING
+        features = self.film(features,datetimerep)
         
         features_proj = self.represent(features) # (B,T,seq_hidden_dim)
         
