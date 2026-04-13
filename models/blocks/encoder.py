@@ -142,7 +142,7 @@ class SegmentEncoder(nn.Module):
         self.film = GlobalFiLM(
             time_dim=self.datetime_dim,
             embed_dim=feature_dim,
-            num_layers=nlayers
+            n_layers=nlayers
         )
         
         self.represent = nn.Sequential(
