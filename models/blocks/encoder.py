@@ -135,7 +135,7 @@ class SegmentEncoder(nn.Module):
         )
         self.alpha = nn.Parameter(torch.tensor(0.5))
         
-        feature_dim = 2 + 2 *highway_dim + 8 + poi_dim # 
+        feature_dim = 2 + 2 *highway_dim + 8 + poi_dim# 
         
         # # film modulator
         self.film = GlobalFiLM(
@@ -174,7 +174,7 @@ class SegmentEncoder(nn.Module):
         alpha = torch.sigmoid(self.alpha)
         poirep = (1 - alpha) * poirep + alpha * poi_1hop_rep
                 
-        features = torch.cat([links[..., 2:6],highwayrep, degrep,poirep], dim=-1) # 2 + 5 + 16 + 33 
+        features = torch.cat([links[..., 2:4],highwayrep, degrep,poirep], dim=-1) # 2 + 5 + 16 + 33 
         
         # FILM CONDITIONING
         features = self.film(features,datetimerep)
