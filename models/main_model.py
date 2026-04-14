@@ -34,7 +34,7 @@ class Cl_TTE(nn.Module):
         
         self.pre_regression_norm = nn.LayerNorm(d_model)
         self.regression_mlp = nn.Sequential(
-            nn.Linear(d_model, d_model//2),
+            nn.Linear(d_model + self.enc.datetime_dim, d_model//2),
             nn.LeakyReLU(),
             nn.Linear(d_model//2, 1)
         )
