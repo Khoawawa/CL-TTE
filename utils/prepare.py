@@ -115,7 +115,10 @@ def collate_func(data, args, info_all):
             n1, n2 = info[2], info[3]
 
             if n1 in nodeinfo and n2 in nodeinfo:
-                seg[i, 4:8] = [...]
+                seg[i, 4:8] = [
+                    nodeinfo[info[2]][0], nodeinfo[info[2]][1],
+                    nodeinfo[info[3]][0], nodeinfo[info[3]][1]
+                ]
             else:
                 seg[i, 4:8] = 0.0
             
