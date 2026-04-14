@@ -167,14 +167,14 @@ class SegmentEncoder(nn.Module):
         highwayrep2 = self.highwayembed(links[:, :, 1].long()) # 6
         highwayrep = torch.cat([highwayrep1, highwayrep2], dim=-1)
         
-        degrep = self.deg_embed(links[:, :, 4:6])
+        degrep = self.deg_embed(links[:, :, 4:6]) # 
         
         poirep = self.poi_embed(links[:, :, 6:6+9])
         poi_1hop_rep = self.poi_embed(links[:, :, 6+9:6+9+9])
         alpha = torch.sigmoid(self.alpha)
         poirep = (1 - alpha) * poirep + alpha * poi_1hop_rep
                 
-        features = torch.cat([links[..., 2:6],highwayrep, poirep], dim=-1) # 2 + 5 + 16 + 33 
+        features = torch.cat([links[..., 2:6],highwayrep, degrep,poirep], dim=-1) # 2 + 5 + 16 + 33 
         
         # FILM CONDITIONING
         features = self.film(features,datetimerep)
