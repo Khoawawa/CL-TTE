@@ -98,7 +98,7 @@ def preprocess_edgeinfo(edgeinfo):
         
         if len(neighbors) > 0:
             poi_neighbors = np.stack(
-                [edgeinfo[n][4:] for n in neighbors], axis=0
+                [edgeinfo[n][5:] for n in neighbors], axis=0
             )
             poi_1hop = poi_neighbors.mean(axis=0)
         else:
