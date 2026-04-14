@@ -95,8 +95,8 @@ class Cl_TTE(nn.Module):
         
         # REGRESSION
         z = self.pre_regression_norm(z)
-        z_time = torch.concat([z, datetimerep], dim=-1) # (B,D + 33)
-        t = self.regression_mlp(z_time) # (B, 1)
+        # z_time = torch.concat([z, datetimerep], dim=-1) # (B,D + 33)
+        t = self.regression_mlp(z) # (B, 1)
         
         return t, l_cl
     

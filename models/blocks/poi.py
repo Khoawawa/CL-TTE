@@ -61,7 +61,7 @@ class GlobalFiLM(nn.Module):
 
         for layer in self.layers:
             x_norm = layer["norm"](x)
-            x = layer['film'](x_norm, time_embed)
+            x = x + layer["film"](x_norm, time_embed) - x_norm
             x = x + layer["ffn"](x_norm)
             
         return self.post_norm(x)
@@ -88,8 +88,8 @@ class ResidualGatedFiLM(nn.Module):
         
         # gamma = gamma.unsqueeze(1) # (B, 1, D)
         # beta = beta.unsqueeze(1) # (B, 1, D)
-        # gate = torch.sigmoid(gate).unsqueeze(1) # (B, 1, D)
-        
+        gate = torch.sigmoid(gate) # (B, D)
+        # gate = gate.unsqueeze(1) # (B, 1, D)
         
         modulated = (1 + gamma) * x + beta # (B, D)
         
