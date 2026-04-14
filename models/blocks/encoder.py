@@ -138,12 +138,12 @@ class SegmentEncoder(nn.Module):
         
         feature_dim = 2 + 2 *highway_dim + gps_dim + poi_dim # 
         
-        # film modulator
-        self.film = GlobalFiLM(
-            time_dim=self.datetime_dim,
-            embed_dim=feature_dim,
-            n_layers=nlayers
-        )
+        # # film modulator
+        # self.film = GlobalFiLM(
+        #     time_dim=self.datetime_dim,
+        #     embed_dim=feature_dim,
+        #     n_layers=nlayers
+        # )
         
         self.represent = nn.Sequential(
             nn.Linear(feature_dim, feature_dim * 2),
@@ -175,7 +175,7 @@ class SegmentEncoder(nn.Module):
         features = torch.cat([links[..., 2:4], gpsrep,highwayrep, poirep], dim=-1) # 2 + 5 + 16 + 33 
         
         # FILM CONDITIONING
-        features = self.film(features,datetimerep)
+        # features = self.film(features,datetimerep)
         
         features_proj = self.represent(features) # (B,T,seq_hidden_dim)
         

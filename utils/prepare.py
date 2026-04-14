@@ -12,62 +12,72 @@ from utils.util import StandardScaler2
 from models.main_model import Cl_TTE
 import ast
 highway = {'<PAD>': 0, 'unclassified': 1, 'busway': 2, 'crossing': 3, 'living_street': 4, 'motorway': 5, 'motorway_link': 6, 'primary': 7, 'primary_link': 8, 'residential': 9, 'road': 10, 'secondary': 11, 'secondary_link': 12, 'tertiary': 13, 'tertiary_link': 14, 'trunk': 15, 'trunk_link': 16}
-def augment_segments(seg, n_poi_groups,
+def augment_segments(seg,
                      p_highway=0.2,
                      p_poi=0.35,
                      p_seg=0.12):
 
-    seg = seg.copy()  # (T, F)
+    seg_aug = seg * 1.0 # (T, F)
 
     # --- Highway dropout ---
-    highway = seg[:, :2]
+    highway = seg_aug[:, :2]
     mask_hw = np.random.rand(*highway.shape) < p_highway
     highway[mask_hw] = 1  # unclassified
-    seg[:, :2] = highway
+    seg_aug[:, :2] = highway
 
     # --- POI dropout ---
-    poi = seg[:, 8:]
+    poi = seg_aug[:, 8:]
     mask_poi = np.random.rand(*poi.shape) < p_poi
     poi = poi * (~mask_poi)
-    seg[:, 8:] = poi
+    seg_aug[:, 8:] = poi
 
     # --- Segment dropout (feature masking, NOT removal) ---
-    T = seg.shape[0]
+    T = seg_aug.shape[0]
     seg_mask = np.random.rand(T) < p_seg
 
     # prevent full collapse
     if seg_mask.all():
         seg_mask[np.random.randint(T)] = False
+        
+    seg_aug[seg_mask, 0:2] = 1  # highway → unclassified
+    seg_aug[seg_mask, 4:8] *= 0.3  # GPS
+    seg_aug[seg_mask, 8:] *= 0.3  # POI
 
-    for i in range(T):
-        if seg_mask[i]:
-            seg[i, 0:2] = 1        # highway → unclassified
-            seg[i, 4:8] *= 0.3     # GPS  
-            seg[i, 8:]  *= 0.3     # POI 
-            # KEEP length (2) and cumlen (3)
+    return seg_aug
+def preprocess_edgeinfo(edgeinfo):
+    new_edgeinfo = {}
 
-    return seg
+    for k, info in edgeinfo.items():
+        hw_ids = parse_highway_tags(info[0])  # run ONCE
 
+        new_edgeinfo[k] = [
+            hw_ids,      # already parsed
+            info[1],
+            info[2],
+            info[3],
+            *info[4:]
+        ]
+
+    return new_edgeinfo
 def parse_highway_tags(raw_val, max_tags=2):
-    """Converts OSM strings/lists to a fixed-size list of IDs."""
-    UNCLASSIFIED_ID = highway.get('unclassified', 1)
-    
-    # 1. Handle string/list input
-    if isinstance(raw_val, str) and raw_val.startswith("["):
-        try: tags = ast.literal_eval(raw_val)
-        except: tags = [raw_val]
-    elif isinstance(raw_val, list):
+    UNCLASSIFIED_ID = 1
+
+    if isinstance(raw_val, list):
         tags = raw_val
+    elif isinstance(raw_val, str) and raw_val.startswith("["):
+        try:
+            tags = raw_val.strip("[]").replace("'", "").split(",")
+        except:
+            tags = [raw_val]
     else:
         tags = [raw_val]
 
-    # 2. Map to IDs with fallback
-    ids = [highway.get(t, UNCLASSIFIED_ID) for t in tags]
-    
-    # 3. Pad with 0 (Reserved for 'No Tag')
-    while len(ids) < max_tags:
-        ids.append(0)
-    return ids[:max_tags]
+    ids = [highway.get(t.strip(), UNCLASSIFIED_ID) for t in tags[:max_tags]]
+
+    if len(ids) < max_tags:
+        ids += [0] * (max_tags - len(ids))
+
+    return ids
 
 node_type = {'turning_circle':1, 'traffic_signals':2, 'crossing':3, 'motorway_junction':4, "mini_roundabout":5}
 
@@ -79,7 +89,7 @@ def collate_func(data, args, info_all):
     dateinfo = []
     inds = []
     n_poi_groups = args.data_config['n_poi_groups'] 
-    # 1. Date/Time Preprocessing
+
     for l in data:
         wday = int(l[2])
         doy_norm = (float(l[3]) / 365.0) * 2 * np.pi
@@ -89,41 +99,46 @@ def collate_func(data, args, info_all):
     
     lens = np.array([len(k) for k in linkids])
     max_seq_len = lens.max()
-    def get_infos(xs):
-        infos = []
-        for x in xs:
-            info = edgeinfo[x]
-            infot = []
-            
-            # --- HIGHWAY: Now returns 2 IDs instead of 1 ---
-            infot += parse_highway_tags(info[0]) # Adds [ID1, ID2]
-            
-            infot.append(info[1]) # Length
-            infot.append(0)       # Placeholder for cumulative length (calculated later)
-            
-            try:
-                infot += [nodeinfo[info[2]][0], nodeinfo[info[2]][1], 
-                          nodeinfo[info[3]][0], nodeinfo[info[3]][1]]
-            except:
-                infot += [0.0, 0.0, 0.0, 0.0]
-            # poi features
-            infot += info[4:]
-            infos.append(np.asarray(infot))
-        return infos
-
-    # 4. Global Scaling Logic
-    # We extract all segments to scale length and GPS coordinates uniformly
-    all_segments = []
-    for b in linkids:
-        seg_list = get_infos(b)
-        # Calculate cumulative length within the sequence
-        cum_len = 0
-        for s in seg_list:
-            s[3] = cum_len # Index 3 is the placeholder for cumulative length
-            cum_len += s[2] # Index 2 is length
-        all_segments.extend(seg_list)
     
-    all_segments = np.array(all_segments)
+    def get_infos(xs):
+        L = len(xs)
+        feat_dim = 8 + len(edgeinfo[xs[0]][4:])
+        
+        seg = np.zeros((L, feat_dim), dtype=np.float32)
+        
+        for i, x in enumerate(xs):
+            info = edgeinfo[x]
+            
+            seg[i, :2] = info[0]
+            seg[i,2] = info[1]
+            
+            n1, n2 = info[2], info[3]
+
+            if n1 in nodeinfo and n2 in nodeinfo:
+                seg[i, 4:8] = [...]
+            else:
+                seg[i, 4:8] = 0.0
+            
+            seg[i, 8:] = info[4:]
+        
+        lengths = seg[:, 2]
+        cum = np.cumsum(lengths)
+        seg[:, 3] = np.concatenate([[0], cum[:-1]])
+        
+        return seg
+    
+    total_len = sum(lens)
+    feature_dim = 8 + len(edgeinfo[linkids[0][0]][4:])
+    all_segments = np.zeros((total_len, feature_dim), dtype=np.float32)
+
+    ptr = 0
+    for b in linkids:
+        seg = get_infos(b)
+        L = len(seg)
+        
+        all_segments[ptr:ptr+L] = seg
+        ptr += L
+        
     # Scale: Length (idx 2), CumLen (idx 3)
     all_segments[:, 2:4] = scaler.transform(all_segments[:, 2:4])
     # Scale: GPS (idx 4 to 7)
@@ -131,7 +146,7 @@ def collate_func(data, args, info_all):
 
     all_segments = np.nan_to_num(all_segments, 0.0)
     all_segments[:, 8:] = np.maximum(all_segments[:, 8:], 0)
-    # 5. Final Padded Tensor Construction
+    
     # Shape: [Batch, Max_Seq, 8] 
     # Features: [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2]
     feature_dim = all_segments.shape[1]
@@ -149,9 +164,8 @@ def collate_func(data, args, info_all):
             
         padded_clean[i, :l] = seg
         
-
         # augmented view
-        seg_aug = augment_segments(seg, n_poi_groups)
+        seg_aug = augment_segments(seg)
         padded_aug[i, :l] = seg_aug
 
         curr_idx += l
@@ -212,6 +226,8 @@ def load_datadoct_pre(args):
     
     with open(os.path.join(args.absPath,args.data_config['edges_dir']), 'rb') as f:
         edgeinfo = pickle.load(f)
+    new_edgeinfo = preprocess_edgeinfo(edgeinfo)
+    
     with open(os.path.join(args.absPath,args.data_config['nodes_dir']), 'rb') as f:
         nodeinfo = pickle.load(f)
     
@@ -250,7 +266,7 @@ def load_datadoct_pre(args):
     else:
         ValueError("Wrong Dataset Name")
 
-    info_all = [edgeinfo, nodeinfo, scaler, scaler2]
+    info_all = [new_edgeinfo, nodeinfo, scaler, scaler2]
 
 
 class Datadict(Dataset):
