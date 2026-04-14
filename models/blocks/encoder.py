@@ -117,7 +117,6 @@ class SegmentEncoder(nn.Module):
         super().__init__()
 
         highway_dim = 6
-        gps_dim = 16
         week_dim = 3
         date_dim = 10
         time_dim = 20
@@ -125,8 +124,7 @@ class SegmentEncoder(nn.Module):
         self.datetime_dim = week_dim + date_dim + time_dim
         
         self.highwayembed = nn.Embedding(17, highway_dim, padding_idx=0)
-        self.gpsembed = nn.Linear(4, gps_dim)
-        
+        self.deg_embed = nn.Linear(2, 8)
         self.weekembed = nn.Embedding(8, week_dim)
         self.dateembed = PositionalEncoding1D(date_dim)
         self.timeembed = PositionalEncoding1D(d_model=time_dim)
@@ -135,15 +133,16 @@ class SegmentEncoder(nn.Module):
             n_poi_groups=n_poi_groups,
             embed_dim=poi_dim
         )
+        self.alpha = nn.Parameter(torch.tensor(0.5))
         
-        feature_dim = 2 + 2 *highway_dim + gps_dim + poi_dim # 
+        feature_dim = 2 + 2 *highway_dim + 8 + poi_dim # 
         
         # # film modulator
-        # self.film = GlobalFiLM(
-        #     time_dim=self.datetime_dim,
-        #     embed_dim=feature_dim,
-        #     n_layers=nlayers
-        # )
+        self.film = GlobalFiLM(
+            time_dim=self.datetime_dim,
+            embed_dim=feature_dim,
+            n_layers=nlayers
+        )
         
         self.represent = nn.Sequential(
             nn.Linear(feature_dim, feature_dim * 2),
@@ -153,7 +152,7 @@ class SegmentEncoder(nn.Module):
         
     def forward(self, links, dateinfo, profiler: BlockTimer=None): 
         # this should accomodate both original and augmented
-        # links: (B, 2T, 17) 2 * [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2, poi*9]
+        # links: (B, 2T, 17) 2 * [HighwayID1, HighwayID2, Len, CumLen, deg_u, deg_v, poi*9, neighbors*9]
         # dateinfo: (B, 3)
         # mask: (B, 2T)
         B, T, _ = links.shape
@@ -168,14 +167,17 @@ class SegmentEncoder(nn.Module):
         highwayrep2 = self.highwayembed(links[:, :, 1].long()) # 6
         highwayrep = torch.cat([highwayrep1, highwayrep2], dim=-1)
         
-        gpsrep = torch.tanh(self.gpsembed(links[:, :, 4:8].float())) # 16
+        degrep = self.deg_embed(links[:, :, 4:6])
         
-        poirep = self.poi_embed(links[:, :, 8:].float())
-        
-        features = torch.cat([links[..., 2:4], gpsrep,highwayrep, poirep], dim=-1) # 2 + 5 + 16 + 33 
+        poirep = self.poi_embed(links[:, :, 6:6+9])
+        poi_1hop_rep = self.poi_embed(links[:, :, 6+9:6+9+9])
+        alpha = torch.sigmoid(self.alpha)
+        poirep = (1 - alpha) * poirep + alpha * poi_1hop_rep
+                
+        features = torch.cat([links[..., 2:6],highwayrep, poirep], dim=-1) # 2 + 5 + 16 + 33 
         
         # FILM CONDITIONING
-        # features = self.film(features,datetimerep)
+        features = self.film(features,datetimerep)
         
         features_proj = self.represent(features) # (B,T,seq_hidden_dim)
         

@@ -14,7 +14,7 @@ import ast
 highway = {'<PAD>': 0, 'unclassified': 1, 'busway': 2, 'crossing': 3, 'living_street': 4, 'motorway': 5, 'motorway_link': 6, 'primary': 7, 'primary_link': 8, 'residential': 9, 'road': 10, 'secondary': 11, 'secondary_link': 12, 'tertiary': 13, 'tertiary_link': 14, 'trunk': 15, 'trunk_link': 16}
 def augment_segments(seg,
                      p_highway=0.2,
-                     p_poi=0.35,
+                     p_poi=0.2,
                      p_seg=0.12):
 
     seg_aug = seg * 1.0 # (T, F)
@@ -26,10 +26,10 @@ def augment_segments(seg,
     seg_aug[:, :2] = highway
 
     # --- POI dropout ---
-    poi = seg_aug[:, 8:]
+    poi = seg_aug[:, 6:]
     mask_poi = np.random.rand(*poi.shape) < p_poi
     poi = poi * (~mask_poi)
-    seg_aug[:, 8:] = poi
+    seg_aug[:, 6:] = poi
 
     # --- Segment dropout (feature masking, NOT removal) ---
     T = seg_aug.shape[0]
@@ -40,25 +40,93 @@ def augment_segments(seg,
         seg_mask[np.random.randint(T)] = False
         
     seg_aug[seg_mask, 0:2] = 1  # highway → unclassified
-    seg_aug[seg_mask, 4:8] *= 0.3  # GPS
-    seg_aug[seg_mask, 8:] *= 0.3  # POI
+    seg_aug[seg_mask, 6:] *= 0.3  # POI
 
     return seg_aug
+
+def compute_node_degree(edgeinfo):
+    deg_in = {}
+    deg_out = {}
+
+    for edge in edgeinfo.values():
+        u = edge[2]
+        v = edge[3]
+
+        deg_out[u] = deg_out.get(u, 0) + 1
+        deg_in[v]  = deg_in.get(v, 0) + 1
+
+    return deg_in, deg_out
+
+
+def build_edge_adjacency(edgeinfo):
+    in_edges = {}
+    out_edges = {}
+
+    for eid, edge in edgeinfo.items():
+        u, v = edge[2], edge[3]
+        
+        out_edges.setdefault(u, []).append(eid)
+        in_edges.setdefault(v, []).append(eid)
+    
+    edge_neighbors = {}
+    
+    for eid, edge in edgeinfo.items():
+        u = edge[2]
+        v = edge[3]
+        
+        prev_edges = in_edges.get(u, [])   # edges ending at start node
+        next_edges = out_edges.get(v, [])  # edges starting at end node
+
+        neighbors = set(prev_edges + next_edges)
+        neighbors.discard(eid)
+        
+        edge_neighbors[eid] = list(neighbors)
+    return edge_neighbors
+    
+    
 def preprocess_edgeinfo(edgeinfo):
     new_edgeinfo = {}
 
+    edge_neighbors = build_edge_adjacency(edgeinfo)
+    deg_in, deg_out = compute_node_degree(edgeinfo)
+    
     for k, info in edgeinfo.items():
-        hw_ids = parse_highway_tags(info[0])  # run ONCE
+        hw_ids = parse_highway_tags(info[0])
+        
+        poi_self = np.array(info[4:], dtype=np.float32)
+        neighbors = edge_neighbors[k]
+        
+        if len(neighbors) > 0:
+            poi_neighbors = np.stack(
+                [edgeinfo[n][4:] for n in neighbors], axis=0
+            )
+            poi_1hop = poi_neighbors.mean(axis=0)
+        else:
+            poi_1hop = np.zeros_like(poi_self)
+            
+        u = info[2]
+        v = info[3]
+        
+        deg_u = deg_out.get(u, 1)
+        deg_v = deg_in.get(v, 1)
+        
+        deg_u = np.log1p(deg_u)
+        deg_v = np.log1p(deg_v)
 
+        poi_self = np.log1p(poi_self)
+        poi_1hop = np.log1p(poi_1hop)
+        
         new_edgeinfo[k] = [
             hw_ids,      # already parsed
             info[1],
-            info[2],
-            info[3],
-            *info[4:]
+            deg_u,
+            deg_v,
+            *poi_self,
+            *poi_1hop
         ]
 
     return new_edgeinfo
+    
 def parse_highway_tags(raw_val, max_tags=2):
     UNCLASSIFIED_ID = 1
 
@@ -88,7 +156,6 @@ def collate_func(data, args, info_all):
     linkids = [np.asarray(l[1]) for l in data]
     dateinfo = []
     inds = []
-    n_poi_groups = args.data_config['n_poi_groups'] 
 
     for l in data:
         wday = int(l[2])
@@ -100,29 +167,24 @@ def collate_func(data, args, info_all):
     lens = np.array([len(k) for k in linkids])
     max_seq_len = lens.max()
     
+    feature_dim = 6 + len(edgeinfo[linkids[0][0]][4:])
+    
     def get_infos(xs):
         L = len(xs)
-        feat_dim = 8 + len(edgeinfo[xs[0]][4:])
         
-        seg = np.zeros((L, feat_dim), dtype=np.float32)
+        seg = np.zeros((L, feature_dim), dtype=np.float32)
         
         for i, x in enumerate(xs):
             info = edgeinfo[x]
             
             seg[i, :2] = info[0]
             seg[i,2] = info[1]
+            # deg_u, deg_v
+            seg[i, 4] = info[2]
+            seg[i, 5] = info[3]
             
-            n1, n2 = info[2], info[3]
-
-            if n1 in nodeinfo and n2 in nodeinfo:
-                seg[i, 4:8] = [
-                    nodeinfo[info[2]][0], nodeinfo[info[2]][1],
-                    nodeinfo[info[3]][0], nodeinfo[info[3]][1]
-                ]
-            else:
-                seg[i, 4:8] = 0.0
-            
-            seg[i, 8:] = info[4:]
+            seg[i, 6:6+9] = info[4:4+9]
+            seg[i, 6+9:6+9+9] = info[4+9:4+9+9]
         
         lengths = seg[:, 2]
         cum = np.cumsum(lengths)
@@ -131,7 +193,7 @@ def collate_func(data, args, info_all):
         return seg
     
     total_len = sum(lens)
-    feature_dim = 8 + len(edgeinfo[linkids[0][0]][4:])
+    
     all_segments = np.zeros((total_len, feature_dim), dtype=np.float32)
 
     ptr = 0
@@ -144,11 +206,8 @@ def collate_func(data, args, info_all):
         
     # Scale: Length (idx 2), CumLen (idx 3)
     all_segments[:, 2:4] = scaler.transform(all_segments[:, 2:4])
-    # Scale: GPS (idx 4 to 7)
-    all_segments[:, 4:8] = scaler2.transform(all_segments[:, 4:8])
-
-    all_segments = np.nan_to_num(all_segments, 0.0)
-    all_segments[:, 8:] = np.maximum(all_segments[:, 8:], 0)
+    # # Scale: GPS (idx 4 to 7)
+    # all_segments[:, 4:8] = scaler2.transform(all_segments[:, 4:8])
     
     # Shape: [Batch, Max_Seq, 8] 
     # Features: [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2]

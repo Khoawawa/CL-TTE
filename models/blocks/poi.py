@@ -28,7 +28,7 @@ class PoiEncoder(nn.Module):
         x = self.poi_embed(poi_ids)
         x = x.unsqueeze(0).unsqueeze(0).expand(B, T, -1, -1) # (B, T, n_poi_groups, poi_dim)
         
-        scale = torch.tanh(torch.log1p(poi_counts))
+        scale = torch.tanh(poi_counts)
         x = x * (1 + scale.unsqueeze(-1))
         
         x = x.sum(dim=2)
@@ -56,7 +56,7 @@ class GlobalFiLM(nn.Module):
        
 
     def forward(self, x, time_embed):
-        # x: (B, D)
+        # x: (B, T,D)
         # time_embed: (B,D_time)
 
         for layer in self.layers:
@@ -81,19 +81,19 @@ class ResidualGatedFiLM(nn.Module):
         nn.init.zeros_(self.proj[1].weight)
         nn.init.zeros_(self.proj[1].bias)
     def forward(self, x, time_embed):
-        # x: (B, D)
+        # x: (B, T, D)
         # time_embed: (B,D_time)
         
         gamma, beta, gate = self.proj(time_embed).chunk(3, dim=-1) # (B, D)
         
-        # gamma = gamma.unsqueeze(1) # (B, 1, D)
-        # beta = beta.unsqueeze(1) # (B, 1, D)
+        gamma = gamma.unsqueeze(1) # (B, 1, D)
+        beta = beta.unsqueeze(1) # (B, 1, D)
         gate = torch.sigmoid(gate) # (B, D)
-        # gate = gate.unsqueeze(1) # (B, 1, D)
+        gate = gate.unsqueeze(1) # (B, 1, D)
         
-        modulated = (1 + gamma) * x + beta # (B, D)
+        modulated = (1 + gamma) * x + beta # (B, T,D)
         
-        gated = gate * modulated + (1 - gate) * x # (B, D)
+        gated = gate * modulated + (1 - gate) * x # (B, T,D)
         
         res_w = torch.sigmoid(self.residual_weight)
         

@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models.blocks.encoder import SegmentEncoder, ContrastiveEncoder
 from models.blocks.LayerNormGRU import LayerNormGRU
-from models.blocks.poi import GlobalFiLM
+# from models.blocks.poi import GlobalFiLM
 
 
 from models.profiler.profiler import BlockTimer
@@ -30,7 +30,7 @@ class Cl_TTE(nn.Module):
         self.attn = nn.MultiheadAttention(d_model, nhead, dropout=0.1, batch_first=True)
         
         # REGRESSION
-        self.global_film = GlobalFiLM(time_dim=self.enc.datetime_dim, embed_dim=d_model, n_layers=seq_layer)
+        # self.global_film = GlobalFiLM(time_dim=self.enc.datetime_dim, embed_dim=d_model, n_layers=seq_layer)
         
         self.pre_regression_norm = nn.LayerNorm(d_model)
         self.regression_mlp = nn.Sequential(
@@ -90,12 +90,12 @@ class Cl_TTE(nn.Module):
         z =  (h_attn * segment_mask.unsqueeze(-1)).sum(dim=1) # (B, D)
         # if profiler: profiler.stop()
         
-        # FiLM MODULATION
-        z = self.global_film(z, datetimerep) # (B, D)
+        # # FiLM MODULATION
+        # z = self.global_film(z, datetimerep) # (B, D)
         
         # REGRESSION
         z = self.pre_regression_norm(z)
-        # z_time = torch.concat([z, datetimerep], dim=-1) # (B,D + 33)
+        z = torch.concat([z, datetimerep], dim=-1) # (B,D + 33)
         t = self.regression_mlp(z) # (B, 1)
         
         return t, l_cl
