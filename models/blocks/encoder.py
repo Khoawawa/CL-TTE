@@ -117,7 +117,6 @@ class SegmentEncoder(nn.Module):
         super().__init__()
 
         highway_dim = 6
-        gps_dim = 16
         week_dim = 3
         date_dim = 10
         time_dim = 20
@@ -125,7 +124,7 @@ class SegmentEncoder(nn.Module):
         self.datetime_dim = week_dim + date_dim + time_dim
         
         self.highwayembed = nn.Embedding(17, highway_dim, padding_idx=0)
-        self.gpsembed = nn.Linear(4, gps_dim)
+        # self.gpsembed = nn.Linear(4, gps_dim)
         
         self.weekembed = nn.Embedding(8, week_dim)
         self.dateembed = PositionalEncoding1D(date_dim)
@@ -136,7 +135,7 @@ class SegmentEncoder(nn.Module):
             embed_dim=poi_dim
         )
         
-        feature_dim = 2 + 2 *highway_dim + gps_dim + poi_dim # 
+        feature_dim = 2 + 2 *highway_dim  + poi_dim # 
         
         # film modulator
         self.film = GlobalFiLM(
@@ -168,11 +167,18 @@ class SegmentEncoder(nn.Module):
         highwayrep2 = self.highwayembed(links[:, :, 1].long()) # 6
         highwayrep = torch.cat([highwayrep1, highwayrep2], dim=-1)
         
-        gpsrep = torch.tanh(self.gpsembed(links[:, :, 4:8].float())) # 16
+        # gpsrep = torch.tanh(self.gpsembed(links[:, :, 4:8].float())) # 16
         
-        poirep = self.poi_embed(links[:, :, 8:].float())
+        poirep = self.poi_embed(links[:, :, 4:13])
         
-        features = torch.cat([links[..., 2:4], gpsrep,highwayrep, poirep], dim=-1) # 2 + 5 + 16 + 33 
+        features = torch.cat(
+            [
+                links[..., 2:4], # len and cumlen
+                highwayrep,
+                poirep
+            ],
+            dim=-1
+        )
         
         # FILM CONDITIONING
         features = self.film(features,datetimerep)
