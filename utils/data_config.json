@@ -7,7 +7,7 @@
     "time_std": 333.53738287030507,
     "edges_dir": "mydata/nwk_hcm/hcm_edges_poi_new_simplify.pkl",
     "nodes_dir": "mydata/nwk_hcm/hcm_nodes_new.pkl",
-    "n_poi_groups": 10,
+    "n_poi_groups": 9,
     "r_percentile": 0.1,
     "gps_range": [106.6164137, 10.7301793, 106.7132954, 10.8524436]
   }
