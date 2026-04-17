@@ -107,7 +107,7 @@ def collate_func(data, args, info_all):
             except:
                 infot += [0.0, 0.0, 0.0, 0.0]
             # poi features
-            infot += info[4:]
+            infot += info[5:5 + args.data_config['n_poi_groups']]
             infos.append(np.asarray(infot))
         return infos
 
@@ -129,8 +129,6 @@ def collate_func(data, args, info_all):
     # Scale: GPS (idx 4 to 7)
     all_segments[:, 4:8] = scaler2.transform(all_segments[:, 4:8])
 
-    all_segments = np.nan_to_num(all_segments, 0.0)
-    all_segments[:, 8:] = np.maximum(all_segments[:, 8:], 0)
     # 5. Final Padded Tensor Construction
     # Shape: [Batch, Max_Seq, 8] 
     # Features: [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2]

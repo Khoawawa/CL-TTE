@@ -115,7 +115,9 @@ class SegmentEncoder(nn.Module):
     def __init__(self,n_poi_groups, nlayers, d_model=128):
         
         super().__init__()
-
+        
+        self.n_poi_groups = n_poi_groups
+        
         highway_dim = 6
         gps_dim = 16
         week_dim = 3
@@ -170,7 +172,7 @@ class SegmentEncoder(nn.Module):
         
         gpsrep = torch.tanh(self.gpsembed(links[:, :, 4:8].float())) # 16
         
-        poirep = self.poi_embed(links[:, :, 8:].float())
+        poirep = self.poi_embed(links[:, :, 8:8 + self.n_poi_groups].float())
         
         features = torch.cat([links[..., 2:4], gpsrep,highwayrep, poirep], dim=-1) # 2 + 5 + 16 + 33 
         
