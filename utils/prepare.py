@@ -93,8 +93,8 @@ def preprocess_edgeinfo(edgeinfo):
     for k, info in edgeinfo.items():
         hw_ids = parse_highway_tags(info[0])
         
-        poi_self = np.array(info[5:14], dtype=np.float32) # 9 POI group counts
-        assert len(poi_self) == 9, f"Expected 9 POI groups, got {len(poi_self)} for edge {k}"
+        poi_self = np.array(info[5:13], dtype=np.float32) # 8 POI group counts
+        assert len(poi_self) == 8, f"Expected 8 POI groups, got {len(poi_self)} for edge {k}"
         # neighbors = edge_neighbors[k]
         
         # if len(neighbors) > 0:

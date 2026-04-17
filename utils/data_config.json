@@ -19,7 +19,7 @@
     "time_std": 333.53738287030507,
     "edges_dir": "mydata/network_porto/porto_edges_poi_new_simplify.pkl",
     "nodes_dir": "mydata/network_porto/porto_nodes_new.pkl",
-    "n_poi_groups": 9,
+    "n_poi_groups": 8,
     "r_percentile": 0.1,
     "gps_range": [-8.713, 41.117, -8.568, 41.227]
   }
