@@ -18,11 +18,11 @@ class Cl_TTE(nn.Module):
         self.enc = SegmentEncoder(d_model=d_model, n_poi_groups=n_poi_groups, nlayers=seq_layer)
         
         # CONTRASTIVE BLOCK
-        self.contrast_enc = ContrastiveEncoder(d_model=d_model,nlayer=seq_layer,nhead=nhead,r_percentile=r_percentile)
-        self.alpha_h = nn.Parameter(torch.tensor(0.2))
+        # self.contrast_enc = ContrastiveEncoder(d_model=d_model,nlayer=seq_layer,nhead=nhead,r_percentile=r_percentile)
+        # self.alpha_h = nn.Parameter(torch.tensor(0.2))
         
         # TEMPORAL BLOCK
-        self.post_norm = nn.LayerNorm(d_model)
+        # self.post_norm = nn.LayerNorm(d_model)
         self.temporal_block = LayerNormGRU(input_dim=d_model, hidden_dim=d_model, num_layers=seq_layer)
         
         # ATTENTION POOLING
@@ -54,27 +54,28 @@ class Cl_TTE(nn.Module):
         
         # ENCODING THE SEGMENTS
         
-        links = torch.cat([links_clean, links_aug], dim=1) # (B, 2T, 17)
+        # links = torch.cat([links_clean, links_aug], dim=1) # (B, 2T, 17)
         if profiler: profiler.start('enc')
-        segment_rep, datetimerep = self.enc(links,dateinfo, profiler)  # (B, 2T, D)
+        segment_rep, datetimerep = self.enc(links_clean,dateinfo, profiler)  # (B, 2T, D)
         if profiler: profiler.stop()
         
-        segment_rep_clean, segment_rep_aug = torch.chunk(segment_rep, 2, dim=1) # (B, T, D)
+        # segment_rep_clean, segment_rep_aug = torch.chunk(segment_rep, 2, dim=1) # (B, T, D)
         
-        # CONTRASTIVE LEARNING
-        if profiler: profiler.start('contrast')
-        with torch.amp.autocast('cuda',enabled=False):
-            h_cl, l_cl = self.contrast_enc(
-                segment_rep_clean, 
-                segment_rep_aug, 
-                src_key_padding_mask=padding_mask, 
-                y_true=y_true
-            )
-        if profiler: profiler.stop()
+        # # CONTRASTIVE LEARNING
+        # if profiler: profiler.start('contrast')
+        # with torch.amp.autocast('cuda',enabled=False):
+        #     h_cl, l_cl = self.contrast_enc(
+        #         segment_rep_clean, 
+        #         segment_rep_aug, 
+        #         src_key_padding_mask=padding_mask, 
+        #         y_true=y_true
+        #     )
+        # if profiler: profiler.stop()
         
         # GATED RESIDUAL CONNECTION
-        gate = torch.sigmoid(self.alpha_h)
-        h = self.post_norm(segment_rep_clean + gate * h_cl.detach())
+        # gate = torch.sigmoid(self.alpha_h)
+        # h = self.post_norm(segment_rep_clean + gate * h_cl.detach())
+        h = segment_rep
         
         # TEMPORAL ENCODING
         if profiler: profiler.start('GRU')
@@ -93,5 +94,5 @@ class Cl_TTE(nn.Module):
         z_time = torch.concat([z, datetimerep], dim=-1) # (B,D + 33)
         t = self.regression_mlp(z_time) # (B, 1)
         
-        return t, l_cl
+        return t, None
     

@@ -214,7 +214,7 @@ def collate_func(data, args, info_all):
     # Features: [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2]
     feature_dim = all_segments.shape[1]
     padded_clean = np.zeros((len(data), max_seq_len, feature_dim), dtype=np.float32)
-    padded_aug   = np.zeros_like(padded_clean)
+    # padded_aug   = np.zeros_like(padded_clean)
     
     curr_idx = 0
     for i, l in enumerate(lens):
@@ -228,14 +228,14 @@ def collate_func(data, args, info_all):
         padded_clean[i, :l] = seg
         
         # augmented view
-        seg_aug = augment_segments(seg)
-        padded_aug[i, :l] = seg_aug
+        # seg_aug = augment_segments(seg)
+        # padded_aug[i, :l] = seg_aug
 
         curr_idx += l
     
     return {
         'links_clean': torch.from_numpy(padded_clean),
-        'links_aug': torch.from_numpy(padded_aug),
+        # 'links_aug': torch.from_numpy(padded_aug),
         'dateinfo': torch.from_numpy(np.asarray(dateinfo, dtype=np.float32)),
         'lens': torch.LongTensor(lens), 
         'inds': inds, 
