@@ -289,7 +289,7 @@ def load_datadoct_pre(args):
     
     with open(os.path.join(args.absPath,args.data_config['edges_dir']), 'rb') as f:
         edgeinfo = pickle.load(f)
-    new_edgeinfo = preprocess_edgeinfo(edgeinfo)
+    new_edgeinfo = preprocess_edgeinfo(edgeinfo, args)
     
     with open(os.path.join(args.absPath,args.data_config['nodes_dir']), 'rb') as f:
         nodeinfo = pickle.load(f)
