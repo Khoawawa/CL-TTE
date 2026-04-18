@@ -71,7 +71,7 @@ def train_model(model: nn.Module, data_loaders: Dict[str, DataLoader],
                             loss_eta = loss_func(truth=truth_data, predict=output)
                             
                             if phase == 'train':  
-                                loss = create_main_loss(loss_eta,loss_cl,args)
+                                loss = loss_eta
                             else:
                                 loss = loss_eta
                         
@@ -83,7 +83,7 @@ def train_model(model: nn.Module, data_loaders: Dict[str, DataLoader],
                             scaler.step(optimizer)
                             scaler.update()
                     if phase == 'train':       
-                        desc = f"L1: {loss_eta.item()}, CL: {loss_cl.item()}"
+                        desc = f"L1: {loss_eta.item()}"
                     else:
                         desc = f"L1: {loss_eta.item()}"
                     tqdm_loader.set_description(
