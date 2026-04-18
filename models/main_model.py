@@ -44,7 +44,7 @@ class Cl_TTE(nn.Module):
         # lens: [B]
         
         links_clean = inputs['links_clean']
-        links_aug = inputs['links_aug']
+        # links_aug = inputs['links_aug']
         dateinfo = inputs['dateinfo']
         lens = inputs['lens']
         
