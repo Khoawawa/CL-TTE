@@ -84,7 +84,7 @@ def build_edge_adjacency(edgeinfo):
     return edge_neighbors
     
     
-def preprocess_edgeinfo(edgeinfo):
+def preprocess_edgeinfo(edgeinfo,args):
     new_edgeinfo = {}
 
     # edge_neighbors = build_edge_adjacency(edgeinfo)
@@ -93,8 +93,8 @@ def preprocess_edgeinfo(edgeinfo):
     for k, info in edgeinfo.items():
         hw_ids = parse_highway_tags(info[0])
         
-        poi_self = np.array(info[5:13], dtype=np.float32) # 8 POI group counts
-        assert len(poi_self) == 8, f"Expected 8 POI groups, got {len(poi_self)} for edge {k}"
+        poi_self = np.array(info[5:5 + args.data_config['n_poi_groups']], dtype=np.float32) # 9 POI group counts
+        assert len(poi_self) == args.data_config['n_poi_groups'], f"Expected {args.data_config['n_poi_groups']} POI groups, got {len(poi_self)} for edge {k}"
         # neighbors = edge_neighbors[k]
         
         # if len(neighbors) > 0:
@@ -168,7 +168,7 @@ def collate_func(data, args, info_all):
     lens = np.array([len(k) for k in linkids])
     max_seq_len = lens.max()
     
-    feature_dim = 4 + len(edgeinfo[linkids[0][0]][2:2+9])
+    feature_dim = 4 + len(edgeinfo[linkids[0][0]][2:2+args.data_config['n_poi_groups']])
     
     def get_infos(xs):
         L = len(xs)
@@ -184,7 +184,7 @@ def collate_func(data, args, info_all):
             # seg[i, 4] = info[2]
             # seg[i, 5] = info[3]
             
-            seg[i, 4:4+9] = info[2:2+9]
+            seg[i, 4:4+args.data_config['n_poi_groups']] = info[2:2+args.data_config['n_poi_groups']]
             # seg[i, 6+9:6+9+9] = info[4+9:4+9+9]
         
         lengths = seg[:, 2]
