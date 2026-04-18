@@ -34,6 +34,56 @@ class PoiEncoder(nn.Module):
         x = x.sum(dim=2)
         
         return self.proj(x)
+
+class TimeScaler(nn.Module):
+    def __init__(self, time_dim, embed_dim, n_layers):
+        super().__init__()
+        
+        self.layers = nn.ModuleList([
+            nn.ModuleDict({
+                "scaler": Scaler(time_dim, embed_dim),
+                "ffn": nn.Sequential(
+                    nn.Linear(embed_dim, embed_dim * 2),
+                    nn.GELU(),
+                    nn.Linear(embed_dim * 2, embed_dim),
+                    nn.Dropout(0.1)
+                ),
+                "norm": nn.LayerNorm(embed_dim)
+            })
+            for _ in range(n_layers)
+        ])
+        
+        self.post_norm = nn.LayerNorm(embed_dim)
+       
+
+    def forward(self, x, time_embed):
+        # x: (B, T, D)
+        # time_embed: (B,D_time)
+
+        for layer in self.layers:
+            h = layer["scaler"](x, time_embed)
+            x = h + layer["ffn"](layer["norm"](h))
+        
+        return self.post_norm(x)
+
+class Scaler(nn.Module):
+    def __init__(self, time_dim, d_model):
+        super().__init__()
+        self.norm = nn.LayerNorm(d_model, elementwise_affine=False)
+        self.gamma = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(time_dim, d_model)
+        )
+        nn.init.zeros_(self.gamma[1].weight)
+        nn.init.zeros_(self.gamma[1].bias)
+    def forward(self, x, time_embed):
+        # x: (B, T, D)
+        # time_embed: (B,D_time)
+        gamma = 1 + torch.tanh(self.gamma(time_embed)) # (B, D_time)
+        gamma = gamma.unsqueeze(1) # (B, 1, D_time)
+        
+        return self.norm(x) * gamma
+        
 class GlobalFiLM(nn.Module):
     def __init__(self, time_dim, embed_dim, n_layers):
         super().__init__()
