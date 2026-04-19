@@ -28,10 +28,16 @@ class PoiEncoder(nn.Module):
         x = self.poi_embed(poi_ids)
         x = x.unsqueeze(0).unsqueeze(0).expand(B, T, -1, -1) # (B, T, n_poi_groups, poi_dim)
         
-        scale = torch.tanh(torch.log1p(poi_counts))
-        x = x * (1 + scale.unsqueeze(-1))
+        poi_counts = poi_counts.float()
         
-        x = x.sum(dim=2)
+        poi_sum = poi_counts.sum(dim=-1, keepdim=True)
+        weights = poi_counts / (poi_sum + 1e-6) # (B, T, n_poi_groups)
+        weights = weights.unsqueeze(-1) # (B, T, n_poi_groups, 1)
+        x = (x * weights).sum(dim=2)
+        
+        mask = (poi_sum > 0).float() # (B, T, 1)
+        
+        x = x * mask # zero out when no pois
         
         return self.proj(x)
 

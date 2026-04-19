@@ -115,7 +115,8 @@ class SegmentEncoder(nn.Module):
     def __init__(self,n_poi_groups, nlayers, d_model=128):
         
         super().__init__()
-
+        self.n_poi_groups = n_poi_groups
+        
         highway_dim = 6
         week_dim = 3
         date_dim = 10
@@ -130,14 +131,14 @@ class SegmentEncoder(nn.Module):
         self.dateembed = PositionalEncoding1D(date_dim)
         self.timeembed = PositionalEncoding1D(d_model=time_dim)
         
-        # self.poi_embed = PoiEncoder(
-        #     n_poi_groups=n_poi_groups,
-        #     embed_dim=poi_dim
-        # )
+        self.poi_embed = PoiEncoder(
+            n_poi_groups=n_poi_groups,
+            embed_dim=poi_dim
+        )
         
         feature_dim = 2 + \
                     2 *highway_dim\
-                    # + poi_dim # 
+                    + poi_dim # 
         
         # film modulator
         self.film = GlobalFiLM(
@@ -171,13 +172,13 @@ class SegmentEncoder(nn.Module):
         
         # gpsrep = torch.tanh(self.gpsembed(links[:, :, 4:8].float())) # 16
         
-        # poirep = self.poi_embed(links[:, :, 4:13])
+        poirep = self.poi_embed(links[:, :, 4:4+self.n_poi_groups]) # (B, T, poi_dim)
         
         features = torch.cat(
             [
                 links[..., 2:4], # len and cumlen
                 highwayrep,
-                # poirep
+                poirep
             ],
             dim=-1
         )

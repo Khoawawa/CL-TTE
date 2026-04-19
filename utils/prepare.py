@@ -13,9 +13,9 @@ from models.main_model import Cl_TTE
 import ast
 highway = {'<PAD>': 0, 'unclassified': 1, 'busway': 2, 'crossing': 3, 'living_street': 4, 'motorway': 5, 'motorway_link': 6, 'primary': 7, 'primary_link': 8, 'residential': 9, 'road': 10, 'secondary': 11, 'secondary_link': 12, 'tertiary': 13, 'tertiary_link': 14, 'trunk': 15, 'trunk_link': 16}
 def augment_segments(seg,
-                     p_highway=0.2,
-                     p_poi=0.35,
-                     p_seg=0.12):
+                     p_highway=0.3,
+                     p_poi=0.5,
+                     p_seg=0.2):
 
     seg_aug = seg * 1.0 # (T, F)
 
@@ -26,10 +26,10 @@ def augment_segments(seg,
     seg_aug[:, :2] = highway
 
     # --- POI dropout ---
-    poi = seg_aug[:, 6:]
+    poi = seg_aug[:, 4:]
     mask_poi = np.random.rand(*poi.shape) < p_poi
     poi = poi * (~mask_poi)
-    seg_aug[:, 6:] = poi
+    seg_aug[:, 4:] = poi
 
     # --- Segment dropout (feature masking, NOT removal) ---
     T = seg_aug.shape[0]
@@ -40,50 +40,10 @@ def augment_segments(seg,
         seg_mask[np.random.randint(T)] = False
         
     seg_aug[seg_mask, 0:2] = 1  # highway → unclassified
-    seg_aug[seg_mask, 6:] *= 0.3  # POI
+    seg_aug[seg_mask, 4:] *= 0.3  # POI
 
     return seg_aug
 
-def compute_node_degree(edgeinfo):
-    deg_in = {}
-    deg_out = {}
-
-    for edge in edgeinfo.values():
-        u = edge[2]
-        v = edge[3]
-
-        deg_out[u] = deg_out.get(u, 0) + 1
-        deg_in[v]  = deg_in.get(v, 0) + 1
-
-    return deg_in, deg_out
-
-
-def build_edge_adjacency(edgeinfo):
-    in_edges = {}
-    out_edges = {}
-
-    for eid, edge in edgeinfo.items():
-        u, v = edge[2], edge[3]
-        
-        out_edges.setdefault(u, []).append(eid)
-        in_edges.setdefault(v, []).append(eid)
-    
-    edge_neighbors = {}
-    
-    for eid, edge in edgeinfo.items():
-        u = edge[2]
-        v = edge[3]
-        
-        prev_edges = in_edges.get(u, [])   # edges ending at start node
-        next_edges = out_edges.get(v, [])  # edges starting at end node
-
-        neighbors = set(prev_edges + next_edges)
-        neighbors.discard(eid)
-        
-        edge_neighbors[eid] = list(neighbors)
-    return edge_neighbors
-    
-    
 def preprocess_edgeinfo(edgeinfo,args):
     new_edgeinfo = {}
 
