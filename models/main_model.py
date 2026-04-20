@@ -19,7 +19,6 @@ class Cl_TTE(nn.Module):
         
         # CONTRASTIVE BLOCK
         self.contrast_enc = ContrastiveEncoder(d_model=d_model,nlayer=seq_layer,nhead=nhead,r_percentile=r_percentile,contrastive_temperature=contrastive_temperature)
-        self.alpha_h = nn.Parameter(torch.tensor(0.2))
         
         # TEMPORAL BLOCK
         self.post_norm = nn.LayerNorm(d_model)
@@ -75,9 +74,7 @@ class Cl_TTE(nn.Module):
             )
         if profiler: profiler.stop()
         
-        # GATED RESIDUAL CONNECTION
-        gate = torch.sigmoid(self.alpha_h)
-        h = self.post_norm(segment_rep_clean + gate * h_cl.detach())
+        h = self.post_norm(segment_rep_clean)
         
         # TEMPORAL ENCODING
         if profiler: profiler.start('GRU')
