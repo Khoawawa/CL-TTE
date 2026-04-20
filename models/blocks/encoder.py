@@ -11,10 +11,11 @@ from models.blocks.poi import PoiEncoder, GlobalFiLM
 from models.profiler.profiler import BlockTimer
 
 class ContrastiveEncoder(nn.Module):
-    def __init__(self, d_model, nhead, r_percentile, dropout=0.1, nlayer=4):
+    def __init__(self, d_model, nhead, r_percentile, dropout=0.1, nlayer=4, contrastive_temperature=0.25):
         super().__init__()
         self.r_percentile = r_percentile
-        
+        self.contrastive_temperature = contrastive_temperature
+
         self.pos_enc = PositionalEncodingIndex(d_model)
         self.msm = MSM(d_model,nhead,dropout,nlayer)
         
@@ -24,7 +25,7 @@ class ContrastiveEncoder(nn.Module):
             nn.LeakyReLU(),
             nn.Linear(d_model, d_model)
         )
-        self.loss = HardContrastiveLoss()
+        self.loss = HardContrastiveLoss(temperature=self.contrastive_temperature)
         
     def create_pos_mask(self, y_true):
         # y_true: (B, T)
@@ -160,16 +161,17 @@ class SegmentEncoder(nn.Module):
         
     def forward(self, links, dateinfo, profiler: BlockTimer=None): 
         # this should accomodate both original and augmented
-        # links: (B, 2T, 17) 2 * [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2, poi*9]
+        # links: (2B, T, 17) 2 * [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2, poi*9]
         # dateinfo: (B, 3)
-        # mask: (B, 2T)
+        # mask: (2B, T)
         B, T, _ = links.shape
         
         weekrep   = self.weekembed(dateinfo[:, 0].long())
         daterep   = self.dateembed(dateinfo[:, 1])
         timerep   = self.timeembed(dateinfo[:, 2])
         
-        datetimerep = torch.cat([weekrep, daterep, timerep], dim=-1)
+        datetimerep = torch.cat([weekrep, daterep, timerep], dim=-1) # (B, datetime_dim)
+        datetimerep_expand = torch.cat([datetimerep, datetimerep], dim=0) # (2B, datetime_dim)
         # spatial features
         highwayrep1 = self.highwayembed(links[:, :, 0].long()) # 6
         highwayrep2 = self.highwayembed(links[:, :, 1].long()) # 6
@@ -177,7 +179,7 @@ class SegmentEncoder(nn.Module):
         
         # gpsrep = torch.tanh(self.gpsembed(links[:, :, 4:8].float())) # 16
         
-        poirep = self.poi_embed(links[:, :, 4:4+self.n_poi_groups]) # (B, T, poi_dim)
+        poirep = self.poi_embed(links[:, :, 4:4+self.n_poi_groups]) # (2B, T, poi_dim)
         
         features = torch.cat(
             [
@@ -189,9 +191,9 @@ class SegmentEncoder(nn.Module):
         )
         
         # FILM CONDITIONING
-        features = self.film(features,datetimerep)
+        features = self.film(features,datetimerep_expand)
         
-        features_proj = self.represent(features) # (B,T,seq_hidden_dim)
+        features_proj = self.represent(features) # (2B,T,seq_hidden_dim)
         
         return features_proj, datetimerep
     

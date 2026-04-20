@@ -8,7 +8,7 @@ from models.blocks.LayerNormGRU import LayerNormGRU
 from models.profiler.profiler import BlockTimer
     
 class Cl_TTE(nn.Module):
-    def __init__(self, d_model, nhead, seq_layer, r_percentile=0.2,n_poi_groups=9):
+    def __init__(self, d_model, nhead, seq_layer, r_percentile=0.2,n_poi_groups=9,contrastive_temperature=0.25):
         super().__init__()
         
         self.d_model = d_model
@@ -18,7 +18,7 @@ class Cl_TTE(nn.Module):
         self.enc = SegmentEncoder(d_model=d_model, n_poi_groups=n_poi_groups, nlayers=seq_layer)
         
         # CONTRASTIVE BLOCK
-        self.contrast_enc = ContrastiveEncoder(d_model=d_model,nlayer=seq_layer,nhead=nhead,r_percentile=r_percentile)
+        self.contrast_enc = ContrastiveEncoder(d_model=d_model,nlayer=seq_layer,nhead=nhead,r_percentile=r_percentile,contrastive_temperature=contrastive_temperature)
         self.alpha_h = nn.Parameter(torch.tensor(0.2))
         
         # TEMPORAL BLOCK
@@ -26,6 +26,7 @@ class Cl_TTE(nn.Module):
         self.temporal_block = LayerNormGRU(input_dim=d_model, hidden_dim=d_model, num_layers=seq_layer)
         
         # ATTENTION POOLING
+        self.pool_query = nn.Parameter(torch.randn(1,1,d_model))
         self.attn = nn.MultiheadAttention(d_model, nhead, dropout=0.1, batch_first=True)
         
         # REGRESSION
@@ -55,12 +56,12 @@ class Cl_TTE(nn.Module):
         
         # ENCODING THE SEGMENTS
         
-        links = torch.cat([links_clean, links_aug], dim=1) # (B, 2T, 17)
+        links = torch.cat([links_clean, links_aug], dim=0) # (2B, T, input_dim)
         if profiler: profiler.start('enc')
-        segment_rep, datetimerep = self.enc(links,dateinfo, profiler)  # (B, 2T, D)
+        segment_rep, datetimerep = self.enc(links,dateinfo, profiler)  # (2B, T, D)
         if profiler: profiler.stop()
         
-        segment_rep_clean, segment_rep_aug = torch.chunk(segment_rep, 2, dim=1) # (B, T, D)
+        segment_rep_clean, segment_rep_aug = torch.chunk(segment_rep, 2, dim=0) # (B, T, D)
         
         # CONTRASTIVE LEARNING
         if profiler: profiler.start('contrast')
@@ -86,9 +87,9 @@ class Cl_TTE(nn.Module):
         if profiler: profiler.stop()
         # ATTENTION POOLING
         if profiler: profiler.start('attn pooling')
-        h_attn = self.attn(h, h, h, key_padding_mask=padding_mask)[0] # (B, T, D)
+        query = self.pool_query.expand(h.size(0), -1, -1) # (B, 1, D)
+        z = self.attn(query, h, h, key_padding_mask=padding_mask)[0].squeeze(1) # (B, D)
         
-        z =  (h_attn * segment_mask.unsqueeze(-1)).sum(dim=1) # (B, D)
         if profiler: profiler.stop()
         # REGRESSION
         z = self.pre_regression_norm(z)
