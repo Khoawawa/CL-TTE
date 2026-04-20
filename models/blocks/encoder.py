@@ -71,7 +71,7 @@ class ContrastiveEncoder(nn.Module):
         
         return x.sum(dim=1) / denom
     
-    def forward(self,x,x_aug,src_key_padding_mask=None,y_true=None):
+    def forward(self,x,x_aug,src_key_padding_mask=None,src_key_augment_padding_mask=None,y_true=None):
         # x: (B, T, D)
         # x_aug: (B, T, D)
         
@@ -81,11 +81,16 @@ class ContrastiveEncoder(nn.Module):
             pad_mask = torch.ones(x.size(0), x.size(1), dtype=torch.bool, device=x.device)
         else:
             pad_mask = src_key_padding_mask
+        
+        if src_key_augment_padding_mask is None:
+            augment_pad_mask = torch.ones(x_aug.size(0), x_aug.size(1), dtype=torch.bool, device=x_aug.device)
+        else:
+            augment_pad_mask = src_key_augment_padding_mask
         # encode
         if self.training:
             
             x_all = torch.cat([x,x_aug],dim=0) # (2B, T, D)
-            pad_mask_all = torch.cat([pad_mask,pad_mask],dim=0) # (2B, T)
+            pad_mask_all = torch.cat([pad_mask,augment_pad_mask],dim=0) # (2B, T)
             
             x_all_pos = self.pos_enc(x_all, pad_mask_all)
             

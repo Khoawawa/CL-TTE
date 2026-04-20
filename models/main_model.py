@@ -45,6 +45,7 @@ class Cl_TTE(nn.Module):
         
         links_clean = inputs['links_clean']
         links_aug = inputs['links_aug']
+        src_key_aug_padding_mask = inputs['augment_mask']
         dateinfo = inputs['dateinfo']
         lens = inputs['lens']
         
@@ -68,6 +69,7 @@ class Cl_TTE(nn.Module):
                 segment_rep_clean, 
                 segment_rep_aug, 
                 src_key_padding_mask=padding_mask, 
+                src_key_augment_padding_mask=src_key_aug_padding_mask,
                 y_true=y_true
             )
         if profiler: profiler.stop()

@@ -11,13 +11,38 @@ from torch.utils.data.dataloader import DataLoader
 from utils.util import StandardScaler2
 from models.main_model import Cl_TTE
 import ast
+
+
 highway = {'<PAD>': 0, 'unclassified': 1, 'busway': 2, 'crossing': 3, 'living_street': 4, 'motorway': 5, 'motorway_link': 6, 'primary': 7, 'primary_link': 8, 'residential': 9, 'road': 10, 'secondary': 11, 'secondary_link': 12, 'tertiary': 13, 'tertiary_link': 14, 'trunk': 15, 'trunk_link': 16}
+
 def augment_segments(seg,
                      p_highway=0.3,
-                     p_poi=0.5,
-                     p_seg=0.2):
+                     p_poi=0.35,
+                     p_seg=0.2,
+                     max_merge_edges=2
+                     ):
 
-    seg_aug = seg * 1.0 # (T, F)
+    seg_aug = seg.copy() # (T, F)
+    T, F = seg_aug.shape
+    
+    # subtrajectory cropping
+    if T > 5: # Only drop edges if the trajectory is reasonably long
+        num_merges = np.random.randint(1, max_merge_edges + 1)
+        
+        for _ in range(num_merges):
+            T = seg_aug.shape[0]
+            if T <= 3:
+                break
+            idx = np.random.randint(0, T-1)
+            # feature aggregation
+            # len
+            seg_aug[idx, 2] = seg_aug[idx, 2] + seg_aug[idx+1, 2] # merge length
+            # pois
+            seg_aug[idx, 4:] = seg_aug[idx, 4:] + seg_aug[idx+1, 4:] # merge pois
+        
+            seg_aug = np.delete(seg_aug, idx+1, axis=0) # remove the absorbed edge
+            
+    T = seg_aug.shape[0]
 
     # --- Highway dropout ---
     highway = seg_aug[:, :2]
@@ -27,8 +52,8 @@ def augment_segments(seg,
 
     # --- POI dropout ---
     poi = seg_aug[:, 4:]
-    mask_poi = np.random.rand(*poi.shape) < p_poi
-    poi = poi * (~mask_poi)
+    mask_poi_rows = np.random.rand(T, 1) < p_poi
+    poi = poi * (~mask_poi_rows)
     seg_aug[:, 4:] = poi
 
     # --- Segment dropout (feature masking, NOT removal) ---
@@ -40,9 +65,16 @@ def augment_segments(seg,
         seg_mask[np.random.randint(T)] = False
         
     seg_aug[seg_mask, 0:2] = 1  # highway → unclassified
-    seg_aug[seg_mask, 4:] *= 0.3  # POI
-
-    return seg_aug
+    scale_factors = np.random.uniform(0.0, 0.5, size=(seg_mask.sum(), 1))
+    seg_aug[seg_mask, 4:] *= scale_factors  # POI
+    
+    noise = np.random.normal(0, 5.0, size=seg_aug[:, 2].shape)
+    seg_aug[:, 2] += noise
+    seg_aug[:, 2] = np.clip(seg_aug[:, 2], a_min=1.0, a_max=None)  # ensure length is positive
+    cum = np.cumsum(seg_aug[:, 2])
+    seg_aug[:, 3] = np.concatenate([[0], cum[:-1]])
+    
+    return seg_aug, T
 
 def preprocess_edgeinfo(edgeinfo,args):
     new_edgeinfo = {}
@@ -165,37 +197,39 @@ def collate_func(data, args, info_all):
         all_segments[ptr:ptr+L] = seg
         ptr += L
         
-    # Scale: Length (idx 2), CumLen (idx 3)
-    all_segments[:, 2:4] = scaler.transform(all_segments[:, 2:4])
-    # # Scale: GPS (idx 4 to 7)
-    # all_segments[:, 4:8] = scaler2.transform(all_segments[:, 4:8])
-    
-    # Shape: [Batch, Max_Seq, 8] 
-    # Features: [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2]
     feature_dim = all_segments.shape[1]
+    
     padded_clean = np.zeros((len(data), max_seq_len, feature_dim), dtype=np.float32)
     padded_aug   = np.zeros_like(padded_clean)
     
     curr_idx = 0
+    Ts = []
+    
     for i, l in enumerate(lens):
-        if curr_idx + l > len(all_segments):
-            print(f"Overflow or mismatch: curr_idx={curr_idx}, l={l}, total={len(all_segments)}")
-        seg = all_segments[curr_idx : curr_idx + l]
+        seg_raw = all_segments[curr_idx : curr_idx + l].copy()
         
-        if seg.shape[0] != l:
-            print(f"Mismatch at batch {i}: expected {l}, got {seg.shape[0]}")
-            
-        padded_clean[i, :l] = seg
+        seg_aug_raw, T = augment_segments(seg_raw)
         
-        # augmented view
-        seg_aug = augment_segments(seg)
-        padded_aug[i, :l] = seg_aug
-
+        seg_clean_scaled = seg_raw.copy()
+        seg_clean_scaled[:, 2:4] = scaler.transform(seg_clean_scaled[:, 2:4])
+        padded_clean[i, :l] = seg_clean_scaled
+        
+        seg_aug_scaled = seg_aug_raw.copy()
+        seg_aug_scaled[:, 2:4] = scaler.transform(seg_aug_scaled[:, 2:4])
+        padded_aug[i, :T] = seg_aug_scaled
+        
+        Ts.append(T)  
         curr_idx += l
+        
+    augment_lens = np.array(Ts)
+    
+    max_aug_len = padded_aug.shape[1]
+    augment_padding_mask = np.arange(max_aug_len)[None, :] >= augment_lens[:, None] # True where padding, False where data
     
     return {
         'links_clean': torch.from_numpy(padded_clean),
         'links_aug': torch.from_numpy(padded_aug),
+        'augment_mask': torch.from_numpy(augment_padding_mask),
         'dateinfo': torch.from_numpy(np.asarray(dateinfo, dtype=np.float32)),
         'lens': torch.LongTensor(lens), 
         'inds': inds, 
