@@ -85,38 +85,14 @@ def preprocess_edgeinfo(edgeinfo,args):
     for k, info in edgeinfo.items():
         hw_ids = parse_highway_tags(info[0])
         
-        poi_self = np.array(info[5:5 + args.data_config['n_poi_groups']], dtype=np.float32) # 9 POI group counts
+        poi_self = np.array(info[4:4 + args.data_config['n_poi_groups']], dtype=np.float32)
         assert len(poi_self) == args.data_config['n_poi_groups'], f"Expected {args.data_config['n_poi_groups']} POI groups, got {len(poi_self)} for edge {k}"
-        # neighbors = edge_neighbors[k]
-        
-        # if len(neighbors) > 0:
-        #     poi_neighbors = np.stack(
-        #         [edgeinfo[n][5:] for n in neighbors], axis=0
-        #     )
-        #     poi_1hop = poi_neighbors.mean(axis=0)
-        # else:
-        #     poi_1hop = np.zeros_like(poi_self)
-            
-        # u = info[2]
-        # v = info[3]
-        
-        # deg_u = deg_out.get(u, 1)
-        # deg_v = deg_in.get(v, 1)
-        
-        # deg_u = np.log1p(deg_u)
-        # deg_v = np.log1p(deg_v)
-
-        # poi_self = np.log1p(poi_self)
-        # poi_1hop = np.log1p(poi_1hop)
         
         new_edgeinfo[k] = [
             hw_ids,      # already parsed
             info[1],
-            # deg_u,
-            # deg_v,
             *poi_self,
-            # *poi_1hop
-        ]
+        ] # 1 + 1 + n_poi_groups = 1 + 1 + n_poi_groups features per edge
 
     return new_edgeinfo
     
@@ -140,10 +116,8 @@ def parse_highway_tags(raw_val, max_tags=2):
 
     return ids
 
-node_type = {'turning_circle':1, 'traffic_signals':2, 'crossing':3, 'motorway_junction':4, "mini_roundabout":5}
-
 def collate_func(data, args, info_all):
-    edgeinfo, nodeinfo, scaler, scaler2 = info_all
+    edgeinfo, scaler = info_all
 
     time = torch.Tensor([d[-1] for d in data])
     linkids = [np.asarray(l[1]) for l in data]
@@ -160,7 +134,7 @@ def collate_func(data, args, info_all):
     lens = np.array([len(k) for k in linkids])
     max_seq_len = lens.max()
     
-    feature_dim = 4 + len(edgeinfo[linkids[0][0]][2:2+args.data_config['n_poi_groups']])
+    feature_dim = 4 + args.data_config['n_poi_groups'] # highway(2), length(1), cum_length(1), pois(n_poi_groups)
     
     def get_infos(xs):
         L = len(xs)
@@ -172,12 +146,8 @@ def collate_func(data, args, info_all):
             
             seg[i, :2] = info[0]
             seg[i,2] = info[1]
-            # deg_u, deg_v
-            # seg[i, 4] = info[2]
-            # seg[i, 5] = info[3]
             
             seg[i, 4:4+args.data_config['n_poi_groups']] = info[2:2+args.data_config['n_poi_groups']]
-            # seg[i, 6+9:6+9+9] = info[4+9:4+9+9]
         
         lengths = seg[:, 2]
         cum = np.cumsum(lengths)
@@ -285,8 +255,11 @@ def load_datadoct_pre(args):
         edgeinfo = pickle.load(f)
     new_edgeinfo = preprocess_edgeinfo(edgeinfo, args)
     
-    with open(os.path.join(args.absPath,args.data_config['nodes_dir']), 'rb') as f:
-        nodeinfo = pickle.load(f)
+    sample_edge = next(iter(new_edgeinfo.values()))
+    assert len(sample_edge) == 2 + args.data_config['n_poi_groups'], f"Expected {2 + args.data_config['n_poi_groups']} features per edge, got {len(sample_edge)}. Please check the edgeinfo preprocessing."
+    
+    # with open(os.path.join(args.absPath,args.data_config['nodes_dir']), 'rb') as f:
+    #     nodeinfo = pickle.load(f)
     
     if "porto" in args.dataset:
         scaler = StandardScaler()
@@ -323,7 +296,7 @@ def load_datadoct_pre(args):
     else:
         ValueError("Wrong Dataset Name")
 
-    info_all = [new_edgeinfo, nodeinfo, scaler, scaler2]
+    info_all = [new_edgeinfo, scaler]
 
 
 class Datadict(Dataset):
