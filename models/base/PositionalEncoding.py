@@ -60,7 +60,7 @@ class PositionalEncodingIndex(nn.Module):
         pe = pe.unsqueeze(0)  # (1, T, D)
         self.register_buffer("pe", pe)
 
-    def forward(self, x: torch.Tensor, padding_mask: torch.Tensor = None):
+    def forward(self, x: torch.Tensor, padding_mask: torch.Tensor = None, apply_dropout: bool = True) -> torch.Tensor:
         """
         Args:
             x:              (B, T, D)
@@ -75,12 +75,13 @@ class PositionalEncodingIndex(nn.Module):
         if padding_mask is not None:
             # Zero positional encoding where we will mask attention anyway
             # ~padding_mask == valid positions
-            pe = pe * (~padding_mask).unsqueeze(-1).to(pe.dtype)
-
-            # Alternative (equivalent but sometimes clearer):
-            # pe = pe.masked_fill(padding_mask.unsqueeze(-1), 0.0)
-
-        return self.dropout(x + pe)
+            pe = pe.masked_fill(padding_mask.unsqueeze(-1), 0.0)
+        
+        out = x + pe
+        if apply_dropout:
+            out = self.dropout(out)
+        return out
+    
 class PositionalEncoding1D(nn.Module):
     def __init__(self, d_model: int = 256):
         super().__init__()

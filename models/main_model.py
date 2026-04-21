@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from models.blocks.encoder import SegmentEncoder, ContrastiveEncoder
+from models.base.PositionalEncoding import PositionalEncodingIndex
 from models.blocks.LayerNormGRU import LayerNormGRU
 
 
@@ -26,6 +27,7 @@ class Cl_TTE(nn.Module):
         
         # ATTENTION POOLING
         self.pool_query = nn.Parameter(torch.randn(1,1,d_model))
+        self.pool_pos_enc = PositionalEncodingIndex(d_model)  # Positional encoding for attention pooling
         self.attn = nn.MultiheadAttention(d_model, nhead, dropout=0.1, batch_first=True)
         
         # REGRESSION
@@ -85,7 +87,8 @@ class Cl_TTE(nn.Module):
         # ATTENTION POOLING
         if profiler: profiler.start('attn pooling')
         query = self.pool_query.expand(h.size(0), -1, -1) # (B, 1, D)
-        z = self.attn(query, h, h, key_padding_mask=padding_mask)[0].squeeze(1) # (B, D)
+        h_pos = self.pool_pos_enc(h, padding_mask, apply_dropout=False) # (B, T, D)
+        z = self.attn(query, h_pos, h_pos, key_padding_mask=padding_mask)[0].squeeze(1) # (B, D)
         
         if profiler: profiler.stop()
         # REGRESSION

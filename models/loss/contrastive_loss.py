@@ -8,33 +8,35 @@ class HardContrastiveLoss(nn.Module):
         self.temperature = temperature
         
     def forward(self, z, positive_mask):
+        # z: (B, D), positive_mask: (B, B)
+        device = z.device
+        
         z = F.normalize(z, dim=-1, eps=1e-8).float()
+        logits_mask = ~torch.eye(sim.size(0), dtype=torch.bool, device=device)
         
-        # 2. Similarity
-        sim = torch.matmul(z, z.T) / self.temperature 
+        pos_mask = positive_mask.float() * logits_mask.float()
+        pos_mask_bool = pos_mask.bool()
         
-        # 3. Stability trick
-        sim = sim - sim.max(dim=1, keepdim=True)[0]
-
-        # 4. Create boolean masks
-        logits_mask = ~torch.eye(sim.size(0), dtype=torch.bool, device=sim.device)
-        pos_mask_bool = positive_mask.bool()
-
-        # 5. Fast PyTorch Masking (-1e9 completely removes them from logsumexp)
-        # Denominator: All pairs EXCEPT self
-        sim_denom = sim.masked_fill(~logits_mask, -1e4)
+        sim = torch.matmul(z, z.T) / self.temperature
+        
+        sim_for_shift = sim.masked_fill(~logits_mask, -torch.inf)
+        shift = sim_for_shift.max(dim=1, keepdim=True)[0].detach()
+        sim = sim - shift
+        
+        sim_denom = sim.masked_fill(~logits_mask, -torch.inf)
         log_denom = torch.logsumexp(sim_denom, dim=1)
 
         # Numerator: ONLY positive pairs
-        sim_num = sim.masked_fill(~pos_mask_bool, -1e4)
+        sim_num = sim.masked_fill(~pos_mask_bool, -torch.inf)
         log_num = torch.logsumexp(sim_num, dim=1)
 
-        # 6. Loss
         loss = -(log_num - log_denom)
-
-        # ---- FINAL SAFETY ----
-        loss = torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))
-
+        
+        has_pos = pos_mask_bool.any(dim=1)
+        loss = loss[has_pos]
+        
+        if loss.numel() == 0:
+            return z.sum() * 0.0
         return loss.mean()
     
 class SoftContrastiveLoss(nn.Module):

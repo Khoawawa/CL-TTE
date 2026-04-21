@@ -30,35 +30,39 @@ class ContrastiveEncoder(nn.Module):
     def create_pos_mask(self, y_true):
         # y_true: (B, T)
         if y_true.dim() == 2:
+            assert y_true.size(1) == 1, "y_true should have shape (B, 1) if 2D"
             y_true = y_true.squeeze(-1)
+            
         y_true = y_true.detach()
-        B = y_true.size(0)
-
+        
+        B = y_true.shape[0]
+        device = y_true.device
+        
+        
         y_true = (y_true - y_true.mean()) / (y_true.std() + 1e-6)
         
         dist = torch.abs(y_true.unsqueeze(0) - y_true.unsqueeze(1))
-        mask = ~torch.eye(B, dtype=torch.bool, device=y_true.device)
-        r = torch.quantile(dist[mask], self.r_percentile).clamp(min=1e-3)
+        
+        i,j = torch.triu_indices(B, B, offset=1, device=device)
+        r = torch.quantile(dist[i,j], self.r_percentile).clamp(min=1e-3)
+        
         pos_base = (dist <= r).float()   # (B, B)
         pos_base.fill_diagonal_(0)
         # expand to 2B
-        pos_mask = torch.zeros(2*B, 2*B, device=y_true.device)
+        pos_mask = torch.zeros(2*B, 2*B, device=device)
 
-        # ori ↔ ori
-        pos_mask[:B, :B] = pos_base
-
-        # aug inherits ori
-        pos_mask[B:, :B] = pos_base
-        pos_mask[:B, B:] = pos_base
-
-        # DO NOT include aug ↔ aug
-        # pos_mask[B:, B:] = 0
+        pos_mask[:B, :B] = pos_base # ori vs ori
+        pos_mask[B:, :B] = pos_base # ori vs aug
+        pos_mask[:B, B:] = pos_base # aug vs ori
+        pos_mask[B:, B:] = pos_base # aug vs aug
 
         # identity pairs (strong positives)
-        idx = torch.arange(B, device=y_true.device)
+        idx = torch.arange(B, device=device)
         pos_mask[idx, idx+B] = 1.0
         pos_mask[idx+B, idx] = 1.0
 
+        pos_mask.fill_diagonal_(0)
+        
         return pos_mask
     
     def masked_mean_pooling(self, x, pad_mask):
@@ -79,12 +83,12 @@ class ContrastiveEncoder(nn.Module):
         B, T, D = x.shape
         
         if src_key_padding_mask is None:
-            pad_mask = torch.ones(x.size(0), x.size(1), dtype=torch.bool, device=x.device)
+            pad_mask = torch.zeros(x.size(0), x.size(1), dtype=torch.bool, device=x.device)
         else:
             pad_mask = src_key_padding_mask
         
         if src_key_augment_padding_mask is None:
-            augment_pad_mask = torch.ones(x_aug.size(0), x_aug.size(1), dtype=torch.bool, device=x_aug.device)
+            augment_pad_mask = torch.zeros(x_aug.size(0), x_aug.size(1), dtype=torch.bool, device=x_aug.device)
         else:
             augment_pad_mask = src_key_augment_padding_mask
         # encode
@@ -102,11 +106,12 @@ class ContrastiveEncoder(nn.Module):
             z_all = self.masked_mean_pooling(h_all,pad_mask_all) # (2B, D)
             
             z_all_proj = self.proj(z_all)
-            # create pos mask
-            pos_mask = self.create_pos_mask(y_true)
-            
-            # contrastive learning
-            l_cl = self.loss(z_all_proj, pos_mask)
+            with torch.amp.autocast('cuda', enabled=False):
+                # create pos mask
+                pos_mask = self.create_pos_mask(y_true)
+                
+                # contrastive learning
+                l_cl = self.loss(z_all_proj.float(), pos_mask)
             
         else:
             x_pos = self.pos_enc(x, pad_mask)
