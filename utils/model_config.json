@@ -3,7 +3,7 @@
         "d_model": 128,
         "nhead": 8,
         "seq_layer": 2,
-        "contrastive_temperature": 0.25
+        "contrastive_temperature": 0.07
     },
     "GRU_CL_TTE":{
         "d_model": 128,
