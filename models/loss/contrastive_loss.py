@@ -9,10 +9,11 @@ class HardContrastiveLoss(nn.Module):
         
     def forward(self, z, positive_mask):
         # z: (B, D), positive_mask: (B, B)
+        B, D = z.shape
         device = z.device
         
         z = F.normalize(z, dim=-1, eps=1e-8).float()
-        logits_mask = ~torch.eye(sim.size(0), dtype=torch.bool, device=device)
+        logits_mask = ~torch.eye(B, dtype=torch.bool, device=device)
         
         pos_mask = positive_mask.float() * logits_mask.float()
         pos_mask_bool = pos_mask.bool()
