@@ -100,7 +100,7 @@ class ContrastiveEncoder(nn.Module):
             h = h_all[:B] # (B, T, D)
             
             z_all = self.masked_mean_pooling(h_all,pad_mask_all) # (2B, D)
-            
+            z = z_all[:B] # (B, D)
             
             with torch.amp.autocast('cuda', enabled=False):
                 # create pos mask
@@ -112,11 +112,12 @@ class ContrastiveEncoder(nn.Module):
         else:
             x_pos = self.pos_enc(x, pad_mask)
             h = self.msm(x_pos,pad_mask)
+            z = self.masked_mean_pooling(h,pad_mask)
             
             l_cl = None
         
             
-        return h, l_cl
+        return z, l_cl
     
 class SegmentEncoder(nn.Module):
     def __init__(self,n_poi_groups, nlayers, d_model=128):
