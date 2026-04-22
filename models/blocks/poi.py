@@ -133,6 +133,7 @@ class ResidualGatedFiLM(nn.Module):
             nn.Linear(time_dim, poi_dim * 3)
         )
         
+        self.residual_weight = nn.Parameter(torch.zeros(1))
         nn.init.zeros_(self.proj[1].weight)
         nn.init.zeros_(self.proj[1].bias)
     def forward(self, x, time_embed):
@@ -149,7 +150,9 @@ class ResidualGatedFiLM(nn.Module):
         
         modulated = (1 + gamma) * x_norm + beta
         
-        x = x_norm + gate * (modulated - x_norm)
+        gated = gate * modulated + (1 - gate) * x_norm
         
-        return x
+        res_w = torch.sigmoid(self.residual_weight)
+        
+        return x + res_w * gated # (B, T, n_pois, poi_dim)
 
