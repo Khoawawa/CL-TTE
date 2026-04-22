@@ -101,12 +101,13 @@ class ContrastiveEncoder(nn.Module):
             
             z_all = self.masked_mean_pooling(h_all,pad_mask_all) # (2B, D)
             
-            z_all_proj = self.proj(z_all)
-            # create pos mask
-            pos_mask = self.create_pos_mask(y_true)
             
-            # contrastive learning
-            l_cl = self.loss(z_all_proj, pos_mask)
+            with torch.amp.autocast('cuda', enabled=False):
+                # create pos mask
+                pos_mask = self.create_pos_mask(y_true)
+                z_all_proj = self.proj(z_all.float())
+                # contrastive learning
+                l_cl = self.loss(z_all_proj, pos_mask)
             
         else:
             x_pos = self.pos_enc(x, pad_mask)

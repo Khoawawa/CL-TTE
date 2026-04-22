@@ -104,7 +104,6 @@ class ReCo(nn.Module):
 class MSM(nn.Module):
     def __init__(self, d_model,nhead, dropout=0.1, nlayer=4):
         super().__init__()
-        self.pos_enc = PositionalEncodingIndex(d_model)
         enc_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
@@ -122,9 +121,7 @@ class MSM(nn.Module):
         )
         
     def forward(self, x, src_key_padding_mask=None):
-        # x: (B, T, D) features after segment encoder
-        
-        x = self.pos_enc(x, src_key_padding_mask)  # (B, T, D)
+        # x: (B, T, D)
         h = self.transformer_encoder(x, src_key_padding_mask=src_key_padding_mask)  # (B, T, D)
         return h
     

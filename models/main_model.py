@@ -64,14 +64,13 @@ class Cl_TTE(nn.Module):
         
         # CONTRASTIVE LEARNING
         if profiler: profiler.start('contrast')
-        with torch.amp.autocast('cuda',enabled=False):
-            h_cl, l_cl = self.contrast_enc(
-                segment_rep_clean, 
-                segment_rep_aug, 
-                src_key_padding_mask=padding_mask, 
-                src_key_augment_padding_mask=src_key_aug_padding_mask,
-                y_true=y_true
-            )
+        h_cl, l_cl = self.contrast_enc(
+            segment_rep_clean, 
+            segment_rep_aug, 
+            src_key_padding_mask=padding_mask, 
+            src_key_augment_padding_mask=src_key_aug_padding_mask,
+            y_true=y_true
+        )
         if profiler: profiler.stop()
         
         h = self.post_norm(segment_rep_clean)
