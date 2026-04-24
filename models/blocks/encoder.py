@@ -18,7 +18,6 @@ class ContrastiveEncoder(nn.Module):
         self.contrastive_temperature = contrastive_temperature
         self.recon_weight = recon_weight
 
-        self.pos_enc = PositionalEncodingIndex(d_model)
         self.msm = MSM(d_model,nhead,dropout,nlayer)
         
         self.proj = nn.Sequential(
@@ -96,17 +95,15 @@ class ContrastiveEncoder(nn.Module):
             x_all = torch.cat([x_masked,x_aug],dim=0) # (2B, T, D)
             pad_mask_all = torch.cat([pad_mask,augment_pad_mask],dim=0) # (2B, T)
             
-            x_all_pos = self.pos_enc(x_all, pad_mask_all)
-            h_all = self.msm(x_all_pos,pad_mask_all)
+            # MSM handle PE
+            h_all = self.msm(x_all,pad_mask_all)
             
             z_all = self.masked_mean_pooling(h_all,pad_mask_all) # (2B, D)
             
-            with torch.amp.autocast('cuda', enabled=False):
-                # create pos mask
-                pos_mask = self.create_pos_mask(y_true)
-                z_all_proj = self.proj(z_all.float())
-                # contrastive learning
-                l_cl = self.loss(z_all_proj, pos_mask)
+            pos_mask = self.create_pos_mask(y_true)
+            z_all_proj = self.proj(z_all)
+            # contrastive learning
+            l_cl = self.loss(z_all_proj, pos_mask)
             
             h_msm = h_all[:B]
             l_recon = self.recon_loss(h_msm, x, mask_positions)
