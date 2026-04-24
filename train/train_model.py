@@ -11,7 +11,9 @@ from tqdm import tqdm
 
 from utils.metric import calculate_metrics
 from utils.util import save_model, to_var
-from utils.prepare import create_main_loss
+
+from models.loss.loss_balancer import LossBalancer
+
 def set_requires_grad(module, flag: bool):
     for p in module.parameters():
         p.requires_grad = flag
@@ -19,17 +21,15 @@ def set_requires_grad(module, flag: bool):
 def train_model(model: nn.Module, data_loaders: Dict[str, DataLoader],
                 loss_func: callable, optimizer: torch.optim,
                 model_folder: str, args, start_epoch=-1, **kwargs):
+    loss_balancer = LossBalancer()
     num_epochs = args.epochs
     phases = [
         'train',
         'val',
         ]
+    
     since = time.perf_counter()
-    for phase in phases:
-        if phase not in data_loaders:
-            raise KeyError(f"{phase} loader is missing from data_loaders")
-        print(f"{phase} loader found with {len(data_loaders[phase])} batches")
-        
+    
     with open(model_folder + "/output.txt", "a") as f:
         f.write(str(model))
         f.write("\n\n")
@@ -71,7 +71,7 @@ def train_model(model: nn.Module, data_loaders: Dict[str, DataLoader],
                             loss_eta = loss_func(truth=truth_data, predict=output)
                             
                             if phase == 'train':  
-                                loss = create_main_loss(loss_eta,loss_cl,args)
+                                loss = loss_balancer(loss_eta, loss_cl, args.beta)
                             else:
                                 loss = loss_eta
                         
