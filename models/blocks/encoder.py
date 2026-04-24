@@ -110,8 +110,7 @@ class ContrastiveEncoder(nn.Module):
             l_combined = l_cl + self.recon_weight * l_recon
             
         else:
-            x_pos = self.pos_enc(x, pad_mask)
-            h_msm = self.msm(x_pos,pad_mask)
+            h_msm = self.msm(x,pad_mask)
             
             l_combined = None
         
