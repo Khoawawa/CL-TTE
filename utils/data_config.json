@@ -20,7 +20,7 @@
     "edges_dir": "mydata/network_porto/porto_edges_poi_new_simplify.pkl",
     "nodes_dir": "mydata/network_porto/porto_nodes_new.pkl",
     "n_poi_groups": 12,
-    "r_percentile": 0.05,
+    "r_seconds": 45,
     "gps_range": [-8.713, 41.117, -8.568, 41.227]
   }
 

@@ -5,16 +5,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models.base.PositionalEncoding import PositionalEncoding1D, PositionalEncodingIndex
 from models.loss.contrastive_loss import HardContrastiveLoss
+from models.loss.reconstruction_loss import ReconstructionLoss
 from models.blocks.cl import MSM
 from models.blocks.poi import PoiEncoder, GlobalFiLM
 
 from models.profiler.profiler import BlockTimer
 
 class ContrastiveEncoder(nn.Module):
-    def __init__(self, d_model, nhead, r_percentile, dropout=0.1, nlayer=4, contrastive_temperature=0.25):
+    def __init__(self, d_model, nhead, r_seconds=45, dropout=0.1, nlayer=4, contrastive_temperature=0.25, recon_weight=0.1):
         super().__init__()
-        self.r_percentile = r_percentile
+        self.r_seconds = r_seconds
         self.contrastive_temperature = contrastive_temperature
+        self.recon_weight = recon_weight
 
         self.pos_enc = PositionalEncodingIndex(d_model)
         self.msm = MSM(d_model,nhead,dropout,nlayer)
@@ -26,20 +28,20 @@ class ContrastiveEncoder(nn.Module):
             nn.Linear(d_model, d_model)
         )
         self.loss = HardContrastiveLoss(temperature=self.contrastive_temperature)
+        self.recon_loss = ReconstructionLoss(d_model)
         
     def create_pos_mask(self, y_true):
         # y_true: (B, T)
         if y_true.dim() == 2:
             y_true = y_true.squeeze(-1)
+            
         y_true = y_true.detach()
         B = y_true.size(0)
-
-        y_true = (y_true - y_true.mean()) / (y_true.std() + 1e-6)
+        device = y_true.device
         
         dist = torch.abs(y_true.unsqueeze(0) - y_true.unsqueeze(1))
-        mask = ~torch.eye(B, dtype=torch.bool, device=y_true.device)
-        r = torch.quantile(dist[mask], self.r_percentile).clamp(min=1e-3)
-        pos_base = (dist <= r).float()   # (B, B)
+        
+        pos_base = (dist <= self.r_seconds).float()   # (B, B)
         pos_base.fill_diagonal_(0)
         # expand to 2B
         pos_mask = torch.zeros(2*B, 2*B, device=y_true.device)
@@ -89,18 +91,15 @@ class ContrastiveEncoder(nn.Module):
             augment_pad_mask = src_key_augment_padding_mask
         # encode
         if self.training:
+            x_masked, mask_positions = self.recon_loss.apply_mask(x, pad_mask)
             
-            x_all = torch.cat([x,x_aug],dim=0) # (2B, T, D)
+            x_all = torch.cat([x_masked,x_aug],dim=0) # (2B, T, D)
             pad_mask_all = torch.cat([pad_mask,augment_pad_mask],dim=0) # (2B, T)
             
             x_all_pos = self.pos_enc(x_all, pad_mask_all)
-            
             h_all = self.msm(x_all_pos,pad_mask_all)
             
-            h = h_all[:B] # (B, T, D)
-            
             z_all = self.masked_mean_pooling(h_all,pad_mask_all) # (2B, D)
-            z = z_all[:B] # (B, D)
             
             with torch.amp.autocast('cuda', enabled=False):
                 # create pos mask
@@ -109,15 +108,18 @@ class ContrastiveEncoder(nn.Module):
                 # contrastive learning
                 l_cl = self.loss(z_all_proj, pos_mask)
             
+            h_msm = h_all[:B]
+            l_recon = self.recon_loss(h_msm, x, mask_positions)
+            l_combined = l_cl + self.recon_weight * l_recon
+            
         else:
             x_pos = self.pos_enc(x, pad_mask)
-            h = self.msm(x_pos,pad_mask)
-            z = self.masked_mean_pooling(h,pad_mask)
+            h_msm = self.msm(x_pos,pad_mask)
             
-            l_cl = None
+            l_combined = None
         
-            
-        return z, l_cl
+        return h_msm.detach(), l_combined
+    
     
 class SegmentEncoder(nn.Module):
     def __init__(self,n_poi_groups, nlayers, d_model=128):

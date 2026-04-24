@@ -22,10 +22,7 @@ class Cl_TTE(nn.Module):
         
         # TEMPORAL BLOCK
         self.post_norm = nn.LayerNorm(d_model)
-        self.ctx_proj = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.LayerNorm(d_model)
-        )
+        self.ctx_proj_to_seq = nn.Linear(d_model, d_model)
         self.temporal_block = LayerNormGRU(input_dim=d_model, hidden_dim=d_model, num_layers=seq_layer)
         
         # ATTENTION POOLING
@@ -68,7 +65,7 @@ class Cl_TTE(nn.Module):
         
         # CONTRASTIVE LEARNING
         if profiler: profiler.start('contrast')
-        z_pooled, l_cl = self.contrast_enc(
+        h_msm, l_cl = self.contrast_enc(
             segment_rep_clean, 
             segment_rep_aug, 
             src_key_padding_mask=padding_mask, 
@@ -77,15 +74,12 @@ class Cl_TTE(nn.Module):
         )
         if profiler: profiler.stop()
         
-        h = self.post_norm(segment_rep_clean)
-        
         # TEMPORAL ENCODING
         if profiler: profiler.start('GRU')
+        
+        h = self.post_norm(segment_rep_clean + self.ctx_proj_to_seq(h_msm))    
         h = h.transpose(0,1).contiguous() # (T, B, D)
-        z_pooled_norm = self.ctx_proj(z_pooled.detach()) # (B, D)
-        h0 = torch.zeros(self.temporal_block.num_layers, z_pooled_norm.size(0), self.d_model, device=z_pooled_norm.device)
-        h0[0] = z_pooled_norm
-        h,_ = self.temporal_block(h, lens,hx=h0) # (B, T, D)
+        h,_ = self.temporal_block(h, lens) # (B, T, D)
         h = h.transpose(0,1).contiguous()
         if profiler: profiler.stop()
         
@@ -93,8 +87,8 @@ class Cl_TTE(nn.Module):
         if profiler: profiler.start('attn pooling')
         query = self.pool_query.expand(h.size(0), -1, -1) # (B, 1, D)
         z = self.attn(query, h, h, key_padding_mask=padding_mask)[0].squeeze(1) # (B, D)
-        
         if profiler: profiler.stop()
+        
         # REGRESSION
         z = self.pre_regression_norm(z)
         z_time = torch.concat([z, datetimerep], dim=-1) # (B,D + 33)

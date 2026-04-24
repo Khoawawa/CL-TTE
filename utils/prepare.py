@@ -345,7 +345,7 @@ def create_model(args):
         
     args.model_config = model_config
     args.model_config['n_poi_groups'] = args.data_config["n_poi_groups"]
-    args.model_config['r_percentile'] = args.data_config["r_percentile"]
+    args.model_config['r_seconds'] = args.data_config["r_seconds"]
     
     return Cl_TTE(**model_config)
         

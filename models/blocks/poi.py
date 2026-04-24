@@ -128,10 +128,7 @@ class ResidualGatedFiLM(nn.Module):
         
         self.norm = nn.LayerNorm(poi_dim, elementwise_affine=False)
         
-        self.proj = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(time_dim, poi_dim * 3)
-        )
+        self.proj = nn.Linear(time_dim, poi_dim * 3)
         
         nn.init.zeros_(self.proj[1].weight)
         nn.init.zeros_(self.proj[1].bias)
@@ -147,9 +144,10 @@ class ResidualGatedFiLM(nn.Module):
         
         x_norm = self.norm(x)
         
+        
         modulated = (1 + gamma) * x_norm + beta
         
-        x = x_norm + gate * (modulated - x_norm)
+        gated = gate * modulated + (1 - gate) * x_norm
         
-        return x
+        return x + gated
 
