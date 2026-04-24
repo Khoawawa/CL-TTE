@@ -130,8 +130,8 @@ class ResidualGatedFiLM(nn.Module):
         
         self.proj = nn.Linear(time_dim, poi_dim * 3)
         
-        nn.init.zeros_(self.proj[1].weight)
-        nn.init.zeros_(self.proj[1].bias)
+        nn.init.zeros_(self.proj.weight)
+        nn.init.zeros_(self.proj.bias)
     def forward(self, x, time_embed):
         # x: (B, T, D)
         # time_embed: (B,D_time)
