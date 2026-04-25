@@ -16,8 +16,8 @@ import ast
 highway = {'<PAD>': 0, 'unclassified': 1, 'busway': 2, 'crossing': 3, 'living_street': 4, 'motorway': 5, 'motorway_link': 6, 'primary': 7, 'primary_link': 8, 'residential': 9, 'road': 10, 'secondary': 11, 'secondary_link': 12, 'tertiary': 13, 'tertiary_link': 14, 'trunk': 15, 'trunk_link': 16}
 
 def augment_segments(seg,
-                     p_highway=0.3,
-                     p_poi=0.35,
+                     p_highway=0.1,
+                     p_poi=0.15,
                      p_seg=0.2,
                      max_merge_edges=2
                      ):
