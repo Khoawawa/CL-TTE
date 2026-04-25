@@ -13,7 +13,6 @@ from tqdm import tqdm
 from utils.metric import calculate_metrics
 from utils.util import save_model, to_var, get_warmup_cosine_scheduler, LossBalancer
 
-from models.loss.loss_balancer import LossBalancer
 
 def set_requires_grad(module, flag: bool):
     for p in module.parameters():
