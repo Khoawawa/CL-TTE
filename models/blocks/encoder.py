@@ -21,10 +21,9 @@ class ContrastiveEncoder(nn.Module):
         self.msm = MSM(d_model,nhead,dropout,nlayer)
         
         self.proj = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.LayerNorm(d_model),
-            nn.LeakyReLU(),
-            nn.Linear(d_model, d_model)
+            nn.Linear(d_model, d_model * 2),
+            nn.GELU(),
+            nn.Linear(d_model * 2, d_model)
         )
         self.loss = HardContrastiveLoss(temperature=self.contrastive_temperature)
         self.recon_loss = ReconstructionLoss(d_model)
@@ -101,7 +100,7 @@ class ContrastiveEncoder(nn.Module):
             z_all = self.masked_mean_pooling(h_all,pad_mask_all) # (2B, D)
             
             pos_mask = self.create_pos_mask(y_true)
-            z_all_proj = self.proj(z_all)
+            z_all_proj = F.normalize(self.proj(z_all), dim=-1)
             # contrastive learning
             l_cl = self.loss(z_all_proj, pos_mask)
             
