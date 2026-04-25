@@ -109,7 +109,10 @@ def save_model(path: str, **kwargs):
  
 def load_checkpoint(path: str, model: nn.Module, optimizer, scheduler,
                     loss_balancer: LossBalancer, device):
-    ckpt = torch.load(path, map_location=device)
+    
+    torch.serialization.add_safe_globals([np.core.multiarray.scalar])
+    
+    ckpt = torch.load(path, map_location=device, weights_only=False)
  
     model.load_state_dict(ckpt['state_dict'], strict=False)
     optimizer.load_state_dict(ckpt['optimizer_state_dict'])

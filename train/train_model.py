@@ -146,7 +146,7 @@ def train_model(model:         nn.Module,
                     print(f"LR: {optimizer.param_groups[0]['lr']:.2e}")
  
                     if scores['MAE'] < best_mae:
-                        best_mae = scores['MAE']
+                        best_mae = float(scores['MAE'])
                         save_dict.update(
                             state_dict            = copy.deepcopy(model.state_dict()),
                             epoch                 = epoch,
@@ -169,7 +169,7 @@ def train_model(model:         nn.Module,
                 state_dict           = copy.deepcopy(model.state_dict()),
                 epoch                = epoch + 1,
                 global_step          = global_step,
-                best_mae             = best_mae,
+                best_mae             = float(best_mae),
                 total_steps          = total_steps,
                 warmup_steps         = warmup_steps,
                 optimizer_state_dict = copy.deepcopy(optimizer.state_dict()),
