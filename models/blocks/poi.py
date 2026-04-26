@@ -23,21 +23,21 @@ class PoiEncoder(nn.Module):
         
         
         presence = (poi_counts > 0).float() # (B, T, G)
-        
         embeddings = self.poi_embed(self.poi_ids) # (G, D)
-        embeddings = embeddings.unsqueeze(0).unsqueeze(0).expand(B,T,-1,-1) # (B, T, G, D)
         
         raw_present = presence.sum(dim=-1, keepdim=True) # (B, T, 1)
         any_poi = (raw_present > 0).float() # (B, T, 1)
         n_present = raw_present.clamp(min=1) # (B, T, 1)
         
-        mean_rep = (embeddings * presence.unsqueeze(-1)).sum(dim=2) / n_present # (B, T, D)
+        mean_rep = torch.matmul(presence, embeddings) / n_present # (B, T, D)
         mean_rep = mean_rep * any_poi # zero out when no pois
         
         absent_mask = (presence == 0).unsqueeze(-1) # (B, T, G, 1)
-        dtype = embeddings.dtype
-        neg_inf = torch.finfo(dtype).min
-        max_rep = embeddings.masked_fill(absent_mask, neg_inf).max(dim=2).values # (B, T, D)
+        neg_inf = torch.finfo(embeddings.dtype).min
+        max_rep = embeddings.unsqueeze(0).unsqueeze(0)\
+                            .expand(B, T, -1, -1)\
+                            .masked_fill((presence == 0).unsqueeze(-1), neg_inf)\
+                            .max(dim=2).values
         
         max_rep = max_rep * any_poi # zero out when no pois
         
