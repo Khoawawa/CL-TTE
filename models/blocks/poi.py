@@ -32,7 +32,6 @@ class PoiEncoder(nn.Module):
         mean_rep = torch.matmul(presence, embeddings) / n_present # (B, T, D)
         mean_rep = mean_rep * any_poi # zero out when no pois
         
-        absent_mask = (presence == 0).unsqueeze(-1) # (B, T, G, 1)
         neg_inf = torch.finfo(embeddings.dtype).min
         max_rep = embeddings.unsqueeze(0).unsqueeze(0)\
                             .expand(B, T, -1, -1)\
