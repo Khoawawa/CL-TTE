@@ -65,8 +65,6 @@ def augment_segments(seg,
         seg_mask[np.random.randint(T)] = False
         
     seg_aug[seg_mask, 0:2] = 1  # highway → unclassified
-    scale_factors = np.random.uniform(0.0, 0.5, size=(seg_mask.sum(), 1))
-    seg_aug[seg_mask, 4:] *= scale_factors  # POI
     
     noise = np.random.normal(0, 5.0, size=seg_aug[:, 2].shape)
     seg_aug[:, 2] += noise

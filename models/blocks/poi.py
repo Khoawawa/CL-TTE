@@ -9,37 +9,41 @@ class PoiEncoder(nn.Module):
         self.poi_embed = nn.Embedding(n_poi_groups + 1, embed_dim, padding_idx=0)
         
         self.proj = nn.Sequential(
-            nn.LayerNorm(embed_dim),
-            nn.Linear(embed_dim, embed_dim),
+            nn.LayerNorm(2 * embed_dim),
+            nn.Linear(2 * embed_dim, embed_dim),
             nn.GELU()
         )
-        poi_ids = torch.arange(1,n_poi_groups + 1)
-    
-        self.register_buffer("poi_ids", poi_ids)
+        
+        self.register_buffer("poi_ids", torch.arange(1,n_poi_groups + 1))
         
     
     def forward(self, poi_counts):
-        # poi_counts : (B, T, n_poi_groups)
-        # time_embed: (B, T, d_model)
+        # poi_counts : (B, T, G)
         B, T, _ = poi_counts.shape
         
-        poi_ids = self.poi_ids.to(poi_counts.device)
         
-        x = self.poi_embed(poi_ids)
-        x = x.unsqueeze(0).unsqueeze(0).expand(B, T, -1, -1) # (B, T, n_poi_groups, poi_dim)
+        presence = (poi_counts > 0).float() # (B, T, G)
         
-        poi_counts = poi_counts.float()
+        embeddings = self.poi_embed(self.poi_ids) # (G, D)
+        embeddings = embeddings.unsqueeze(0).unsqueeze(0).expand(B,T,-1,-1) # (B, T, G, D)
         
-        poi_sum = poi_counts.sum(dim=-1, keepdim=True)
-        weights = poi_counts / (poi_sum + 1e-6) # (B, T, n_poi_groups)
-        weights = weights.unsqueeze(-1) # (B, T, n_poi_groups, 1)
-        x = (x * weights).sum(dim=2)
+        raw_present = presence.sum(dim=-1, keepdim=True) # (B, T, 1)
+        any_poi = (raw_present > 0).float() # (B, T, 1)
+        n_present = raw_present.clamp(min=1) # (B, T, 1)
         
-        mask = (poi_sum > 0).float() # (B, T, 1)
+        mean_rep = (embeddings * presence.unsqueeze(-1)).sum(dim=2) / n_present # (B, T, D)
+        mean_rep = mean_rep * any_poi # zero out when no pois
         
-        x = x * mask # zero out when no pois
+        absent_mask = (presence == 0).unsqueeze(-1) # (B, T, G, 1)
+        dtype = embeddings.dtype
+        neg_inf = torch.finfo(dtype).min
+        max_rep = embeddings.masked_fill(absent_mask, neg_inf).max(dim=2).values # (B, T, D)
         
-        return self.proj(x)
+        max_rep = max_rep * any_poi # zero out when no pois
+        
+        combined = torch.cat([mean_rep, max_rep], dim=-1)
+        
+        return self.proj(combined)
 
 class TimeScaler(nn.Module):
     def __init__(self, time_dim, embed_dim, n_layers):
