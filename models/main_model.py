@@ -21,8 +21,6 @@ class Cl_TTE(nn.Module):
         self.contrast_enc = ContrastiveEncoder(d_model=d_model,nlayer=seq_layer,nhead=nhead,r_seconds=r_seconds,contrastive_temperature=contrastive_temperature)
         
         # TEMPORAL BLOCK
-        self.post_norm = nn.LayerNorm(d_model)
-        self.ctx_proj_to_seq = nn.Linear(d_model, d_model)
         self.temporal_block = LayerNormGRU(input_dim=d_model, hidden_dim=d_model, num_layers=seq_layer)
         
         # ATTENTION POOLING
@@ -77,7 +75,7 @@ class Cl_TTE(nn.Module):
         # TEMPORAL ENCODING
         if profiler: profiler.start('GRU')
         
-        h = self.post_norm(segment_rep_clean + self.ctx_proj_to_seq(h_msm))    
+        h = h_msm  
         h = h.transpose(0,1).contiguous() # (T, B, D)
         h,_ = self.temporal_block(h, lens) # (B, T, D)
         h = h.transpose(0,1).contiguous()

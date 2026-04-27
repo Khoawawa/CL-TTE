@@ -113,7 +113,7 @@ class ContrastiveEncoder(nn.Module):
             
             l_combined = None
         
-        return h_msm.detach(), l_combined
+        return h_msm, l_combined
     
     
 class SegmentEncoder(nn.Module):
