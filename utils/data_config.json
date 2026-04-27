@@ -17,7 +17,7 @@
     "collate_fn": "collate_func",
     "time_mean": 616.8322812104205,
     "time_std": 333.53738287030507,
-    "edges_dir": "mydata/network_porto/porto_edges_poi_new_simplify.pkl",
+    "edges_dir": "mydata/network_porto/porto_edges_poi_speed_lanes.pkl",
     "nodes_dir": "mydata/network_porto/porto_nodes_new.pkl",
     "n_poi_groups": 12,
     "r_seconds": 10,
