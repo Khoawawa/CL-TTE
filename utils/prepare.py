@@ -219,7 +219,6 @@ def preprocess_edgeinfo(edgeinfo,args):
         speed_bucket = parse_maxspeed(info[4 + args.data_config['n_poi_groups']])
         lane_bucket = parse_lanes(info[4 + args.data_config['n_poi_groups'] + 1])
         poi_self = np.array(info[4:4 + args.data_config['n_poi_groups']], dtype=np.float32)
-        assert len(poi_self) == args.data_config['n_poi_groups'], f"Expected {args.data_config['n_poi_groups']} POI groups, got {len(poi_self)} for edge {k}"
         
         new_edgeinfo[k] = [
             hw_ids,      # already parsed
