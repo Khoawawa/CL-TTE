@@ -125,7 +125,7 @@ class SegmentEncoder(nn.Module):
         highway_dim = 6
         week_dim = 3
         date_dim = 10
-        time_dim = 20
+        time_dim = 48
         poi_dim = 16
         speed_dim = 4
         lanes_dim = 3
