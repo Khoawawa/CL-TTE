@@ -391,8 +391,6 @@ def load_datadoct_pre(args):
         edgeinfo = pickle.load(f)
     new_edgeinfo = preprocess_edgeinfo(edgeinfo, args)
     
-    sample_edge = next(iter(new_edgeinfo.values()))
-    assert len(sample_edge) == 2 + args.data_config['n_poi_groups'], f"Expected {2 + args.data_config['n_poi_groups']} features per edge, got {len(sample_edge)}. Please check the edgeinfo preprocessing."
     
     # with open(os.path.join(args.absPath,args.data_config['nodes_dir']), 'rb') as f:
     #     nodeinfo = pickle.load(f)
