@@ -57,7 +57,9 @@ class CyclicalTimeEncoding(nn.Module):
         self.period = period
         half_dim = d_model // 2
 
-        frequencies = torch.arange(1, half_dim + 1).float()
+        frequencies = torch.exp(
+            torch.linspace(0, math.log(half_dim), half_dim)
+        )
         self.register_buffer("frequencies", frequencies)  # (half_dim,)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -74,7 +76,7 @@ class CyclicalTimeEncoding(nn.Module):
         x = x.unsqueeze(-1)
 
         # (B, half_dim)
-        x_arg = (2 * math.pi * x * self.frequencies) / self.period
+        x_arg = (2 * math.pi * x.unsqueeze(-1)) / self.period * self.frequencies
 
         pe = torch.cat(
             [torch.sin(x_arg), torch.cos(x_arg)],
