@@ -3,7 +3,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.base.PositionalEncoding import PositionalEncoding1D, PositionalEncodingIndex
+from models.base.PositionalEncoding import PositionalEncoding1D, CyclicalTimeEncoding
 from models.loss.contrastive_loss import HardContrastiveLoss
 from models.loss.reconstruction_loss import ReconstructionLoss
 from models.blocks.cl import MSM
@@ -137,9 +137,9 @@ class SegmentEncoder(nn.Module):
         self.lanesembed = nn.Embedding(7, lanes_dim, padding_idx=0)
         # self.gpsembed = nn.Linear(4, gps_dim)
         
-        self.weekembed = nn.Embedding(8, week_dim)
-        self.dateembed = PositionalEncoding1D(date_dim)
-        self.timeembed = PositionalEncoding1D(d_model=time_dim)
+        self.weekembed = CyclicalTimeEncoding(d_model=week_dim, period=7)
+        self.dateembed = CyclicalTimeEncoding(d_model=date_dim, period=365)
+        self.timeembed = CyclicalTimeEncoding(d_model=time_dim, period=1440)
         
         self.poi_embed = PoiEncoder(
             n_poi_groups=n_poi_groups,
@@ -169,7 +169,7 @@ class SegmentEncoder(nn.Module):
         # mask: (2B, T)
         B, T, _ = links.shape
         
-        weekrep   = self.weekembed(dateinfo[:, 0].long())
+        weekrep   = self.weekembed(dateinfo[:, 0])
         daterep   = self.dateembed(dateinfo[:, 1])
         timerep   = self.timeembed(dateinfo[:, 2])
         
