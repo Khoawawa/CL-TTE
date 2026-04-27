@@ -126,10 +126,15 @@ class SegmentEncoder(nn.Module):
         week_dim = 3
         date_dim = 10
         time_dim = 20
-        poi_dim = 32
+        poi_dim = 16
+        speed_dim = 4
+        lanes_dim = 3
+        
         self.datetime_dim = week_dim + date_dim + time_dim
         
         self.highwayembed = nn.Embedding(17, highway_dim, padding_idx=0)
+        self.speedembed = nn.Embedding(11, speed_dim, padding_idx=0)
+        self.lanesembed = nn.Embedding(7, lanes_dim, padding_idx=0)
         # self.gpsembed = nn.Linear(4, gps_dim)
         
         self.weekembed = nn.Embedding(8, week_dim)
@@ -142,7 +147,7 @@ class SegmentEncoder(nn.Module):
         )
         
         
-        modulate_dim = 2 * highway_dim + poi_dim
+        modulate_dim = 2 * highway_dim + poi_dim + speed_dim + lanes_dim
         feature_dim = 2 + modulate_dim
         
         # film modulator
@@ -159,7 +164,7 @@ class SegmentEncoder(nn.Module):
         
     def forward(self, links, dateinfo, profiler: BlockTimer=None): 
         # this should accomodate both original and augmented
-        # links: (2B, T, 17) 2 * [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2, poi*9]
+        # links: (2B, T, D_in) 2 * [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2, poi*n, speed, lanes]
         # dateinfo: (B, 3)
         # mask: (2B, T)
         B, T, _ = links.shape
@@ -174,16 +179,21 @@ class SegmentEncoder(nn.Module):
         highwayrep1 = self.highwayembed(links[:, :, 0].long()) # 6
         highwayrep2 = self.highwayembed(links[:, :, 1].long()) # 6
         highwayrep = torch.cat([highwayrep1, highwayrep2], dim=-1)
+        # speed and lanes
+        speedrep = self.speedembed(links[:, :, 4].long()) # 4
+        lanesrep = self.lanesembed(links[:, :, 5].long()) # 3
         
         # gpsrep = torch.tanh(self.gpsembed(links[:, :, 4:8].float())) # 16
         
-        poirep = self.poi_embed(links[:, :, 4:4+self.n_poi_groups]) # (2B, T, poi_dim)
+        poirep = self.poi_embed(links[:, :, 6:6+self.n_poi_groups]) # (2B, T, poi_dim)
         len_feats = links[:, :, 2:4] # (2B, T, 2)
         
         modulate_feats = torch.cat(
             [
                 highwayrep,
-                poirep
+                poirep,
+                speedrep,
+                lanesrep,
             ],
             dim=-1
         )
