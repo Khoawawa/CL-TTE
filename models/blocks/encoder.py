@@ -172,7 +172,6 @@ class SegmentEncoder(nn.Module):
         weekrep   = self.weekembed(dateinfo[:, 0]).squeeze(1)
         daterep   = self.dateembed(dateinfo[:, 1]).squeeze(1)
         timerep   = self.timeembed(dateinfo[:, 2]).squeeze(1)
-        print(weekrep.shape, daterep.shape, timerep.shape)
         datetimerep = torch.cat([weekrep, daterep, timerep], dim=-1) # (B, datetime_dim)
         datetimerep_expand = torch.cat([datetimerep, datetimerep], dim=0) # (2B, datetime_dim)
         # spatial features
