@@ -123,7 +123,7 @@ class SegmentEncoder(nn.Module):
         self.n_poi_groups = n_poi_groups
         
         highway_dim = 6
-        week_dim = 3
+        week_dim = 4
         date_dim = 10
         time_dim = 48
         poi_dim = 16
