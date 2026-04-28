@@ -260,9 +260,9 @@ def collate_func(data, args, info_all):
 
     for l in data:
         wday = int(l[2])
-        doy_norm = (float(l[3]) / 365.0) * 2 * np.pi
-        minute_norm = (float(l[4]) / 1440.0) * 2 * np.pi
-        dateinfo.append([wday, doy_norm, minute_norm])
+        doy_raw = float(l[3])        # 1-365
+        minute_raw = float(l[4])
+        dateinfo.append([wday, doy_raw, minute_raw])
         inds.append(l[0])
     
     lens = np.array([len(k) for k in linkids])
