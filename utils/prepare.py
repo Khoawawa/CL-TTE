@@ -250,7 +250,7 @@ def parse_highway_tags(raw_val, max_tags=2):
 
     return ids
 
-def collate_func(data, args, info_all):
+def collate_func(data, args, info_all, is_train=True):
     edgeinfo, scaler = info_all
 
     time = torch.Tensor([d[-1] for d in data])
@@ -259,87 +259,79 @@ def collate_func(data, args, info_all):
     inds = []
 
     for l in data:
-        wday = int(l[2])
-        doy_raw = float(l[3])        # 1-365
+        wday = float(l[2])
+        doy_raw = float(l[3])
         minute_raw = float(l[4])
         dateinfo.append([wday, doy_raw, minute_raw])
         inds.append(l[0])
-    
+
     lens = np.array([len(k) for k in linkids])
     max_seq_len = lens.max()
-    
-    feature_dim = 4 + 2 + args.data_config['n_poi_groups'] # highway(2), length(1), cum_length(1), pois(n_poi_groups)
-    
+
+    feature_dim = 4 + 2 + args.data_config['n_poi_groups']
+
     def get_infos(xs):
         L = len(xs)
-        
         seg = np.zeros((L, feature_dim), dtype=np.float32)
-        
         for i, x in enumerate(xs):
             info = edgeinfo[x]
-            
             seg[i, :2] = info[0]
-            seg[i,2] = info[1] # length
-            seg[i, 4] = info[2] # speed_bucket
-            seg[i, 5] = info[3] # lane_bucket
-            
+            seg[i, 2] = info[1]
+            seg[i, 4] = info[2]
+            seg[i, 5] = info[3]
             seg[i, 6:6+args.data_config['n_poi_groups']] = info[4:4+args.data_config['n_poi_groups']]
-            
         lengths = seg[:, 2]
         cum = np.cumsum(lengths)
         seg[:, 3] = np.concatenate([[0], cum[:-1]])
-        
         return seg
-    
-    total_len = sum(lens)
-    
-    all_segments = np.zeros((total_len, feature_dim), dtype=np.float32)
 
+    total_len = sum(lens)
+    all_segments = np.zeros((total_len, feature_dim), dtype=np.float32)
     ptr = 0
     for b in linkids:
         seg = get_infos(b)
-        L = len(seg)
-        
-        all_segments[ptr:ptr+L] = seg
-        ptr += L
-        
+        all_segments[ptr:ptr+len(seg)] = seg
+        ptr += len(seg)
+
     feature_dim = all_segments.shape[1]
-    
     padded_clean = np.zeros((len(data), max_seq_len, feature_dim), dtype=np.float32)
-    padded_aug   = np.zeros_like(padded_clean)
-    
+
     curr_idx = 0
-    Ts = []
-    
     for i, l in enumerate(lens):
-        seg_raw = all_segments[curr_idx : curr_idx + l].copy()
-        
-        seg_aug_raw, T = augment_segments(seg_raw)
-        
+        seg_raw = all_segments[curr_idx:curr_idx+l].copy()
         seg_clean_scaled = seg_raw.copy()
         seg_clean_scaled[:, 2:4] = scaler.transform(seg_clean_scaled[:, 2:4])
         padded_clean[i, :l] = seg_clean_scaled
-        
-        seg_aug_scaled = seg_aug_raw.copy()
-        seg_aug_scaled[:, 2:4] = scaler.transform(seg_aug_scaled[:, 2:4])
-        padded_aug[i, :T] = seg_aug_scaled
-        
-        Ts.append(T)  
         curr_idx += l
-        
-    augment_lens = np.array(Ts)
-    
-    max_aug_len = padded_aug.shape[1]
-    augment_padding_mask = np.arange(max_aug_len)[None, :] >= augment_lens[:, None] # True where padding, False where data
-    
-    return {
+
+    result = {
         'links_clean': torch.from_numpy(padded_clean),
-        'links_aug': torch.from_numpy(padded_aug),
-        'augment_mask': torch.from_numpy(augment_padding_mask),
         'dateinfo': torch.from_numpy(np.asarray(dateinfo, dtype=np.float32)),
-        'lens': torch.LongTensor(lens), 
-        'inds': inds, 
-    }, time
+        'lens': torch.LongTensor(lens),
+        'inds': inds,
+    }
+
+    if is_train:
+        padded_aug = np.zeros_like(padded_clean)
+        Ts = []
+        curr_idx = 0
+        for i, l in enumerate(lens):
+            seg_raw = all_segments[curr_idx:curr_idx+l].copy()
+            seg_aug_raw, T = augment_segments(seg_raw)
+            seg_aug_scaled = seg_aug_raw.copy()
+            seg_aug_scaled[:, 2:4] = scaler.transform(seg_aug_scaled[:, 2:4])
+            padded_aug[i, :T] = seg_aug_scaled
+            Ts.append(T)
+            curr_idx += l
+
+        augment_lens = np.array(Ts)
+        max_aug_len = padded_aug.shape[1]
+        augment_padding_mask = np.arange(max_aug_len)[None, :] >= augment_lens[:, None]
+
+        result['links_aug'] = torch.from_numpy(padded_aug)
+        result['augment_mask'] = torch.from_numpy(augment_padding_mask)
+
+    return result, time
 
 class BatchSampler:
     def __init__(self, dataset, batch_size):
@@ -445,7 +437,7 @@ class Datadict(Dataset):
 def load_test_datadict(args):
     tdata = np.load(os.path.join(args.absPath,args.data_config['data_dir'],'test.npy'), allow_pickle=True)
     test_loader = DataLoader(Datadict(tdata), batch_size=args.batch_size,
-                                        collate_fn=lambda x: collate_func(x, args, info_all),
+                                        collate_fn=lambda x: collate_func(x, args, info_all,False),
                                         pin_memory=True, shuffle=False)
     
     return test_loader, StandardScaler2(mean=args.data_config['time_mean'], std=args.data_config['time_std'])
@@ -468,7 +460,7 @@ def load_datadict(args):
         else:
             
             loader[phase] = DataLoader(Datadict(data[phase]), batch_size=args.batch_size,
-                                        collate_fn=lambda x: collate_func(x, args, info_all),
+                                        collate_fn=lambda x: collate_func(x, args, info_all,False),
                                         shuffle=False, pin_memory=True,num_workers=2)
     return loader.copy(), StandardScaler2(mean=args.data_config['time_mean'], std=args.data_config['time_std'])
 

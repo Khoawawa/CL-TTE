@@ -47,8 +47,8 @@ class Cl_TTE(nn.Module):
         # lens: [B]
         
         links_clean = inputs['links_clean']
-        links_aug = inputs['links_aug']
-        src_key_aug_padding_mask = inputs['augment_mask']
+        links_aug = inputs.get('links_aug', None)
+        src_key_aug_padding_mask = inputs.get('augment_mask', None)
         dateinfo = inputs['dateinfo']
         lens = inputs['lens']
         
