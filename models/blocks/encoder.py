@@ -25,7 +25,6 @@ class ContrastiveEncoder(nn.Module):
             nn.Linear(d_model * 2, d_model)
         )
         self.loss = HardContrastiveLoss(temperature=self.contrastive_temperature)
-        self.recon_loss = ReconstructionLoss(d_model)
         
     def create_pos_mask(self, y_true):
         # y_true: (B, T)
@@ -87,15 +86,13 @@ class ContrastiveEncoder(nn.Module):
         else:
             augment_pad_mask = src_key_augment_padding_mask
         # encode
-        if self.training:
-            x_masked, mask_positions = self.recon_loss.apply_mask(x, pad_mask)
-            
-            x_all = torch.cat([x_masked,x_aug],dim=0) # (2B, T, D)
+        if self.training:            
+            x_all = torch.cat([x,x_aug],dim=0) # (2B, T, D)
             pad_mask_all = torch.cat([pad_mask,augment_pad_mask],dim=0) # (2B, T)
             
             # MSM handle PE
             h_all = self.msm(x_all,pad_mask_all)
-            
+
             z_all = self.masked_mean_pooling(h_all,pad_mask_all) # (2B, D)
             
             pos_mask = self.create_pos_mask(y_true)
@@ -103,11 +100,10 @@ class ContrastiveEncoder(nn.Module):
             # contrastive learning
             l_cl = self.loss(z_all_proj, pos_mask)
             
-            h_msm_masked = h_all[:B]
-            l_recon = self.recon_loss(h_msm_masked, x, mask_positions)
-            l_combined = l_cl + self.recon_weight * l_recon
+            h_msm = h_all[:B]
             
-            h_msm = self.msm(x, pad_mask)
+            l_combined = l_cl
+            
         else:
             h_msm = self.msm(x,pad_mask)
             
