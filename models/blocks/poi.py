@@ -16,9 +16,16 @@ class PoiEncoder(nn.Module):
         
         self.register_buffer("poi_ids", torch.arange(1,n_poi_groups + 1))
         
+        self.poi_gate = nn.Sequential(
+            nn.Linear(1, n_poi_groups),
+            nn.ReLU(),
+            nn.Linear(n_poi_groups, embed_dim),
+            nn.Sigmoid()
+        )
     
-    def forward(self, poi_counts):
+    def forward(self, poi_counts, culm_lens):
         # poi_counts : (B, T, G)
+        # culm_lens : (B, T, 1)
         B, T, _ = poi_counts.shape
         
         
@@ -32,17 +39,20 @@ class PoiEncoder(nn.Module):
         mean_rep = torch.matmul(presence, embeddings) / n_present # (B, T, D)
         mean_rep = mean_rep * any_poi # zero out when no pois
         
-        neg_inf = torch.finfo(embeddings.dtype).min
-        max_rep = embeddings.unsqueeze(0).unsqueeze(0)\
-                            .expand(B, T, -1, -1)\
-                            .masked_fill((presence == 0).unsqueeze(-1), neg_inf)\
-                            .max(dim=2).values
+        max_rep = (presence.unsqueeze(-1) * embeddings).max(dim=2).values
+        max_rep = max_rep * any_poi
         
-        max_rep = max_rep * any_poi # zero out when no pois
         
         combined = torch.cat([mean_rep, max_rep], dim=-1)
         
-        return self.proj(combined)
+        projected = self.proj(combined)
+        
+        total_lens = culm_lens[:,-1:,:]
+        progress = culm_lens / (total_lens + 1e-6)
+        
+        gate = self.poi_gate(progress) # (B, T, D)
+        
+        return projected * gate
 
 class TimeScaler(nn.Module):
     def __init__(self, time_dim, embed_dim, n_layers):
