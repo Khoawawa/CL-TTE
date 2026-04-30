@@ -528,7 +528,13 @@ def create_loss(args):
             preds = torch.squeeze(preds, 1)
             smoothL1 = SmoothL1Loss(reduction='mean', beta = args.loss_val).forward(preds, labels)
             return smoothL1
-
+    elif args.loss == 'logsmoothL1':
+        def loss(**kwargs):
+            preds = kwargs['predict']
+            labels = kwargs['truth']
+            preds = torch.squeeze(preds, 1)
+            smoothL1 = SmoothL1Loss(reduction='mean', beta = args.loss_val).forward(np.log(preds), np.log(labels))
+            return smoothL1
     else:
         raise ValueError("Unknown loss function.")
     return loss
