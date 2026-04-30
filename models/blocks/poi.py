@@ -47,6 +47,7 @@ class PoiEncoder(nn.Module):
         
         projected = self.proj(combined)
         
+        culm_lens = culm_lens.unsqueeze(-1)
         total_lens = culm_lens[:,-1:,:]
         progress = culm_lens / (total_lens + 1e-6)
         
