@@ -96,8 +96,11 @@ def train_model(model:         nn.Module,
                             scaler.unscale_(optimizer)
                             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                             scaler.step(optimizer)
+                            old_scaler = scaler.get_scale()
                             scaler.update()
-                            scheduler.step()    # step every batch
+                            new_scaler = scaler.get_scale()
+                            if new_scaler >= old_scaler:
+                                scheduler.step()    # step every batch
                             global_step += 1
  
                     # tqdm description
