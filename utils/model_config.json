@@ -2,7 +2,25 @@
     "CL_TTE":{
         "d_model": 128,
         "nhead": 8,
-        "nlayer": 4
+        "seq_layer": 2,
+        "contrastive_temperature": 0.1
+    },
+    "GRU_CL_TTE":{
+        "d_model": 128,
+        "nhead": 8,
+        "nlayer": 4,
+        "seq_layer": 2,
+        "decoder_layer": 3
+    },
+    "BiGRU_CL_TTE":{
+        "d_model": 128,
+        "nhead": 8,
+        "seq_layer": 2
+    },
+    "Enc_Dec_CL_TTE":{
+        "d_model": 128,
+        "nhead": 8,
+        "seq_layer": 4
     }
     
 }

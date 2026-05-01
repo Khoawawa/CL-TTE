@@ -2,121 +2,204 @@ import math
 
 import torch
 import torch.nn as nn
-from models.base.PositionalEncoding import CyclicalTimeEncoding, PositionalEncoding1D
-from models.blocks.cl import MSM, ReCo
+import torch.nn.functional as F
+from models.base.PositionalEncoding import PositionalEncoding1D, CyclicalTimeEncoding
+from models.loss.contrastive_loss import HardContrastiveLoss
+from models.loss.reconstruction_loss import ReconstructionLoss
+from models.blocks.cl import MSM
+from models.blocks.poi import PoiEncoder, GlobalFiLM
+
+from models.profiler.profiler import BlockTimer
 
 class ContrastiveEncoder(nn.Module):
-    def __init__(self, d_model, nhead, dropout=0.1, nlayer=4):
+    def __init__(self, d_model, nhead, r_seconds=45, dropout=0.1, nlayer=4, contrastive_temperature=0.25):
         super().__init__()
-        self.reco = ReCo(d_model,nhead,dropout,nlayer)
-        self.pad_token = nn.Parameter(torch.zeros(1, 1, d_model))
+        self.r_seconds = r_seconds
+        self.contrastive_temperature = contrastive_temperature
+
+        self.msm = MSM(d_model,nhead,dropout,nlayer)
         
-    def apply_token_mask(self, x, lens, mask_prob=0.15):
-        B, T, D = x.shape
-        device = x.device
+        self.proj = nn.Sequential(
+            nn.Linear(d_model, d_model * 2),
+            nn.GELU(),
+            nn.Linear(d_model * 2, d_model)
+        )
+        self.loss = HardContrastiveLoss(temperature=self.contrastive_temperature)
+        
+    def create_pos_mask(self, y_true):
+        # y_true: (B, T)
+        if y_true.dim() == 2:
+            y_true = y_true.squeeze(-1)
+            
+        y_true = y_true.detach()
+        B = y_true.size(0)
+        device = y_true.device
+        
+        dist = torch.abs(y_true.unsqueeze(0) - y_true.unsqueeze(1))
+        
+        pos_base = (dist <= self.r_seconds).float()   # (B, B)
+        pos_base.fill_diagonal_(0)
+        # expand to 2B
+        pos_mask = torch.zeros(2*B, 2*B, device=y_true.device)
 
-        valid_mask = torch.arange(T, device=device).unsqueeze(0) < lens.unsqueeze(1)
-        rand = torch.rand(B, T, device=device)
+        # ori ↔ ori
+        pos_mask[:B, :B] = pos_base
 
-        mask = (rand < mask_prob) & valid_mask
+        # aug inherits ori
+        pos_mask[B:, :B] = pos_base
+        pos_mask[:B, B:] = pos_base
 
-        # split into 80/10/10
-        rand2 = torch.rand(B, T, device=device)
+        # DO NOT include aug ↔ aug
+        # pos_mask[B:, B:] = 0
 
-        mask_token = self.pad_token.expand(B, T, -1).to(dtype=x.dtype)
+        # identity pairs (strong positives)
+        idx = torch.arange(B, device=y_true.device)
+        pos_mask[idx, idx+B] = 1.0
+        pos_mask[idx+B, idx] = 1.0
 
-        x_masked = x.clone()
-
-        # 80% → mask token
-        mask_token_mask = mask & (rand2 < 0.8)
-        x_masked[mask_token_mask] = mask_token[mask_token_mask]
-
-        # 10% → random token
-        random_mask = mask & (rand2 >= 0.8) & (rand2 < 0.9)
-        random_indices = torch.randint(0, T, (B, T), device=device)
-        batch_idx = torch.arange(B, device=device).unsqueeze(1).expand(B, T)
-        x_masked[random_mask] = x[batch_idx[random_mask], random_indices[random_mask]]
-        # 10% → unchanged (do nothing)
-
-        return x_masked, mask
+        return pos_mask
     
-    def forward(self, x, lens, mask_prob, noise,r,y_true=None):
+    def masked_mean_pooling(self, x, pad_mask):
+        # x: (B, T, D)
+        # pad_mask: (B, T) with 0 = valid, 1 = padding
+        valid_mask = ~pad_mask
+        # sum
+        x = x * valid_mask.unsqueeze(-1)
+        
+        denom = valid_mask.sum(dim=1, keepdim=True).clamp(min=1)  # (B, 1)
+        
+        return x.sum(dim=1) / denom
+    
+    def forward(self,x,x_aug,src_key_padding_mask=None,src_key_augment_padding_mask=None,y_true=None):
+        # x: (B, T, D)
+        # x_aug: (B, T, D)
+        
         B, T, D = x.shape
-        device = x.device
         
-        src_padding_mask = torch.arange(T, device=device).unsqueeze(0) >= lens.unsqueeze(1)  # (B, T)
+        if src_key_padding_mask is None:
+            pad_mask = torch.ones(x.size(0), x.size(1), dtype=torch.bool, device=x.device)
+        else:
+            pad_mask = src_key_padding_mask
         
-        x_aug, _ = self.apply_token_mask(x, lens,mask_prob)
-        x_aug = x_aug + torch.randn_like(x_aug) * noise
+        if src_key_augment_padding_mask is None:
+            augment_pad_mask = torch.ones(x_aug.size(0), x_aug.size(1), dtype=torch.bool, device=x_aug.device)
+        else:
+            augment_pad_mask = src_key_augment_padding_mask
+        # encode
+        if self.training:
+            x_all = torch.cat([x, x_aug], dim=0)
+            pad_mask_all = torch.cat([pad_mask, augment_pad_mask], dim=0)
+            
+            h_all = self.msm(x_all, pad_mask_all)
+            z_all = self.masked_mean_pooling(h_all, pad_mask_all)
+            
+            pos_mask = self.create_pos_mask(y_true)
+            z_all_proj = self.proj(z_all)
+            l_cl = self.loss(z_all_proj, pos_mask)
+            
+            h_msm = h_all[:B]
+            
+            l_combined = l_cl            
+        else:
+            h_msm = self.msm(x,pad_mask)
+            
+            l_combined = None
         
-        z, l_cl = self.reco(x,x_aug,r,src_padding_mask,y_true)
-        
-        return z, l_cl
+        return h_msm, l_combined
+    
     
 class SegmentEncoder(nn.Module):
-    def __init__(self, d_model=128):
+    def __init__(self,n_poi_groups, nlayers, d_model=128):
+        
         super().__init__()
-
-        self.highwayembed = nn.Embedding(15, 5, padding_idx=0)
-        self.gpsembed = nn.Linear(4,16)
+        self.n_poi_groups = n_poi_groups
         
-        self.weekembed = nn.Embedding(8, 3)
-        self.dateembed = PositionalEncoding1D(10)
-        self.timeembed = PositionalEncoding1D(d_model=20)
+        highway_dim = 6
+        week_dim = 4
+        date_dim = 10
+        time_dim = 48
+        poi_dim = 16
+        speed_dim = 4
+        lanes_dim = 3
         
-        mlp_in_dim = 2 + 5 + 16 + 3 + 10 + 20 # = 56 // 8
+        self.datetime_dim = week_dim + date_dim + time_dim
         
-        self.datetime_dim = 3 + 10 + 20
+        self.highwayembed = nn.Embedding(17, highway_dim, padding_idx=0)
+        self.speedembed = nn.Embedding(11, speed_dim, padding_idx=0)
+        self.lanesembed = nn.Embedding(7, lanes_dim, padding_idx=0)
+        # self.gpsembed = nn.Linear(4, gps_dim)
         
-        self.represent = nn.Sequential(
-            nn.Linear(mlp_in_dim, mlp_in_dim * 2),
-            nn.LeakyReLU(),
-            nn.Linear(mlp_in_dim * 2, d_model)
+        self.weekembed = CyclicalTimeEncoding(d_model=week_dim, period=7)
+        self.dateembed = CyclicalTimeEncoding(d_model=date_dim, period=365)
+        self.timeembed = CyclicalTimeEncoding(d_model=time_dim, period=1440)
+        
+        self.poi_embed = PoiEncoder(
+            n_poi_groups=n_poi_groups,
+            embed_dim=poi_dim
         )
         
-    def apply_segment_mask(self, x, start_mask, pad_mask, mask_token):
-        """
-        x: (B, T, D)
-        start_mask: (B, T) -> True where segment should be masked
-        pad_mask: (B, T) -> True where padding
-        mask_token: (D,) or (1, 1, D)
-        """
-        B, T, D = x.shape
-
-        x_aug = x.clone()
-
-        # ensure mask_token shape is broadcastable
-        if mask_token.dim() == 1:
-            mask_token = mask_token.view(1, 1, D)
-
-        # apply segment masking (hide information, keep structure)
-        x_aug = torch.where(start_mask.unsqueeze(-1), mask_token, x_aug)
-
-        # keep padding behavior unchanged
-        x_aug = torch.where(pad_mask.unsqueeze(-1), mask_token, x_aug)
-
-        return x_aug
-    
-    def forward(self, links, dateinfo, lens):
-        # links: (B, T, 7)
+        
+        modulate_dim = 2 * highway_dim + poi_dim + speed_dim + lanes_dim
+        feature_dim = 2 + modulate_dim
+        
+        # film modulator
+        self.film = GlobalFiLM(
+            time_dim=self.datetime_dim,
+            embed_dim=modulate_dim,
+            n_layers=nlayers
+        )
+        
+        self.represent = nn.Sequential(
+            nn.Linear(feature_dim, d_model),
+            nn.LayerNorm(d_model),
+        )
+        
+    def forward(self, links, dateinfo, profiler: BlockTimer=None): 
+        # this should accomodate both original and augmented
+        # links: (2B, T, D_in) 2 * [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2, poi*n, speed, lanes]
         # dateinfo: (B, 3)
-        # lens: (B,)
+        # mask: (2B, T)
         B, T, _ = links.shape
         
-        weekrep   = self.weekembed(dateinfo[:, 0].long())
-        daterep   = self.dateembed(dateinfo[:, 1])
-        timerep   = self.timeembed(dateinfo[:, 2])
-        
-        datetimerep = torch.cat([weekrep, daterep, timerep], dim=-1)
-        datetimerep_expand = datetimerep.unsqueeze(1).expand(-1,T, -1) # (B,T,seq_hidden_dim)
+        weekrep   = self.weekembed(dateinfo[:, 0]).squeeze(1)
+        daterep   = self.dateembed(dateinfo[:, 1]).squeeze(1)
+        timerep   = self.timeembed(dateinfo[:, 2]).squeeze(1)
+        datetimerep = torch.cat([weekrep, daterep, timerep], dim=-1) # (B, datetime_dim)
+        datetimerep_expand = torch.cat([datetimerep, datetimerep], dim=0) # (2B, datetime_dim)
         # spatial features
-        highwayrep = self.highwayembed(links[:, :, 0].long()) # 5
+        highwayrep1 = self.highwayembed(links[:, :, 0].long()) # 6
+        highwayrep2 = self.highwayembed(links[:, :, 1].long()) # 6
+        highwayrep = torch.cat([highwayrep1, highwayrep2], dim=-1)
+        # speed and lanes
+        speedrep = self.speedembed(links[:, :, 4].long()) # 4
+        lanesrep = self.lanesembed(links[:, :, 5].long()) # 3
         
-        gpsrep = torch.tanh(self.gpsembed(links[:, :, 3:7].float())) # 16
+        # gpsrep = torch.tanh(self.gpsembed(links[:, :, 4:8].float())) # 16
         
-        features = torch.cat([links[..., 1:3], gpsrep,highwayrep, datetimerep_expand], dim=-1) # 2 + 5 + 16 + 33 
+        poirep = self.poi_embed(links[:, :, 6:6+self.n_poi_groups]) # (2B, T, poi_dim)
+        len_feats = links[:, :, 2:4] # (2B, T, 2)
         
-        features_proj = self.represent(features) # (B,T,seq_hidden_dim)
+        modulate_feats = torch.cat(
+            [
+                highwayrep,
+                poirep,
+                speedrep,
+                lanesrep,
+            ],
+            dim=-1
+        )
+        
+        # FILM CONDITIONING
+        modulate_feats = self.film(modulate_feats,datetimerep_expand)
+        
+        features = torch.cat(
+            [
+                len_feats, # len and cumlen
+                modulate_feats
+            ],
+            dim=-1
+        )
+        features_proj = self.represent(features) # (2B,T,seq_hidden_dim)
         
         return features_proj, datetimerep
     

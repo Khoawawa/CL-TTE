@@ -10,63 +10,336 @@ from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 from utils.util import StandardScaler2
 from models.main_model import Cl_TTE
+import ast
 
-highway = {'living_street':1, 'morotway':2, 'motorway_link':3, 'plannned':4, 'trunk':5, "secondary":6, "trunk_link":7, "tertiary_link":8, "primary":9, "residential":10, "primary_link":11, "unclassified":12, "tertiary":13, "secondary_link":14}
-node_type = {'turning_circle':1, 'traffic_signals':2, 'crossing':3, 'motorway_junction':4, "mini_roundabout":5}
+
+highway = {'<PAD>': 0, 'unclassified': 1, 'busway': 2, 'crossing': 3, 'living_street': 4, 'motorway': 5, 'motorway_link': 6, 'primary': 7, 'primary_link': 8, 'residential': 9, 'road': 10, 'secondary': 11, 'secondary_link': 12, 'tertiary': 13, 'tertiary_link': 14, 'trunk': 15, 'trunk_link': 16}
+SPEED_BUCKETS = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 120]
+# 0 = unknown
+
+def snap_to_bucket(speed: int) -> int:
+    """Snap a speed value to the nearest bucket index."""
+    if speed < 10:
+        return 0   # treat as unknown/invalid
+    thresholds = SPEED_BUCKETS[1:]   # exclude 0 (unknown)
+    for i in range(len(thresholds) - 1):
+        mid = (thresholds[i] + thresholds[i+1]) / 2
+        if speed <= mid:
+            return i + 1   # +1 because index 0 is unknown
+    return len(thresholds)   # max bucket
+
+def parse_speed_value(val: str) -> int:
+    """Parse a single speed string to integer km/h."""
+    val = val.strip().lower()
+    val = val.replace('km/h', '').replace('mph', '').strip()
+    try:
+        speed = int(float(val))
+        if 'mph' in str(val):
+            speed = int(speed * 1.609)
+        return speed
+    except ValueError:
+        return 0
+
+def parse_maxspeed(raw_val) -> int:
+    """
+    Parse OSM maxspeed tag to bucket index.
+    For list values, takes the minimum valid speed.
+    Returns 0 for unknown/invalid.
+    """
+    if raw_val is None or raw_val in ('', 'unknown', 'none', 'signals'):
+        return 0
+
+    if raw_val in ('walk', 'living_street'):
+        return 1   # ~10 km/h bucket
+
+    raw_str = str(raw_val).strip()
+
+    # handle list stored as string: "['50', '40']"
+    if raw_str.startswith('['):
+        try:
+            # strip brackets and quotes, split by comma
+            inner = raw_str.strip("[]").replace("'", "").replace('"', '')
+            parts = [p.strip() for p in inner.split(',')]
+            speeds = [parse_speed_value(p) for p in parts]
+            speeds = [s for s in speeds if s >= 10]   # filter invalid
+            if not speeds:
+                return 0
+            speed = min(speeds)   # take most restrictive
+        except Exception:
+            return 0
+    else:
+        speed = parse_speed_value(raw_str)
+        if speed < 10:
+            return 0
+
+    return snap_to_bucket(speed)
+
+LANE_BUCKETS = {
+    0: 0,   # unknown
+    1: 1,
+    2: 2,
+    3: 3,
+    4: 4,
+    5: 5,
+    6: 6,   # cap at 6, anything above is rare and treated as 6
+}
+N_LANE_BUCKETS = 7   # indices 0-6
+
+def parse_lane_value(val: str) -> int:
+    """Parse a single lane string to integer."""
+    try:
+        return max(1, min(6, int(float(val.strip()))))
+    except (ValueError, TypeError):
+        return 0
+
+def parse_lanes(raw_val) -> int:
+    """
+    Parse OSM lanes tag to bucket index.
+    For list values, takes the minimum (most restrictive).
+    Returns 0 for unknown/invalid.
+    """
+    if raw_val is None or str(raw_val).strip() in ('', 'unknown', 'none'):
+        return 0
+
+    raw_str = str(raw_val).strip()
+
+    # handle list stored as string: "['2', '1']"
+    if raw_str.startswith('['):
+        try:
+            inner  = raw_str.strip("[]").replace("'", "").replace('"', '')
+            parts  = [p.strip() for p in inner.split(',')]
+            lanes  = [parse_lane_value(p) for p in parts if p]
+            lanes  = [l for l in lanes if l > 0]
+            return min(lanes) if lanes else 0
+        except Exception:
+            return 0
+
+    # handle semicolon format: '1;2'
+    if ';' in raw_str:
+        parts = [p.strip() for p in raw_str.split(';')]
+        lanes = [parse_lane_value(p) for p in parts if p]
+        lanes = [l for l in lanes if l > 0]
+        return min(lanes) if lanes else 0
+
+    return parse_lane_value(raw_str)
+
+def augment_segments(seg,
+                     p_highway=0.1,
+                     p_poi=0.15,
+                     p_seg=0.2,
+                     max_merge_edges=2
+                     ):
+
+    seg_aug = seg.copy() # (T, F)
+    T, F = seg_aug.shape
+    
+    if T > 5: # Only merge edges if the trajectory is reasonably long
+        num_merges = np.random.randint(1, max_merge_edges + 1)
+        
+        for _ in range(num_merges):
+            T = seg_aug.shape[0]
+            if T <= 3:
+                break
+            idx = np.random.randint(0, T-1)
+            len_a = seg_aug[idx, 2]
+            len_b = seg_aug[idx+1, 2]
+            total_len = len_a + len_b
+            # feature aggregation
+            # len
+            seg_aug[idx, 2] = total_len
+
+            # TODO: merge speed and lanes by taking average
+            spd_a = seg_aug[idx, 4]
+            spd_b = seg_aug[idx+1, 4]
+            if spd_a > 0 and spd_b > 0:
+                seg_aug[idx, 4] = round((spd_a * len_a + spd_b * len_b) / total_len)
+            elif spd_a > 0:
+                seg_aug[idx, 4] = spd_a
+            else:
+                seg_aug[idx, 4] = spd_b
+            ln_a = seg_aug[idx, 5]
+            ln_b = seg_aug[idx+1, 5]
+            if ln_a > 0 and ln_b > 0:
+                seg_aug[idx, 5] = round((ln_a * len_a + ln_b * len_b) / total_len)
+            elif ln_a > 0:
+                seg_aug[idx, 5] = ln_a
+            else:
+                seg_aug[idx, 5] = ln_b
+            if len_b > len_a:
+                seg_aug[idx, :2] = seg_aug[idx+1, :2] # adopt highway type of the longer edge
+                
+            # pois
+            seg_aug[idx, 6:] = seg_aug[idx, 6:] + seg_aug[idx+1, 6:] # merge pois
+            
+            seg_aug = np.delete(seg_aug, idx+1, axis=0) # remove the absorbed edge
+            
+    T = seg_aug.shape[0]
+
+    # --- Highway dropout ---
+    highway = seg_aug[:, :2]
+    mask_hw = np.random.rand(*highway.shape) < p_highway
+    highway[mask_hw] = 1  # unclassified
+    seg_aug[:, :2] = highway
+
+    # --- POI dropout ---
+    poi = seg_aug[:, 6:]
+    mask_poi_rows = np.random.rand(T, 1) < p_poi
+    poi = poi * (~mask_poi_rows)
+    seg_aug[:, 6:] = poi
+
+    # --- Segment dropout (feature masking, NOT removal) ---
+    T = seg_aug.shape[0]
+    seg_mask = np.random.rand(T) < p_seg
+
+    # prevent full collapse
+    if seg_mask.all():
+        seg_mask[np.random.randint(T)] = False
+        
+    seg_aug[seg_mask, 0:2] = 1  # highway → unclassified
+    seg_aug[seg_mask, 4] = 0  # speed bucket → unknown
+    seg_aug[seg_mask, 5] = 0  # lane bucket → unknown
+    seg_aug[seg_mask, 6:] = 0  # pois → no pois
+    
+    noise = np.random.normal(0, 5.0, size=seg_aug[:, 2].shape)
+    seg_aug[:, 2] += noise
+    seg_aug[:, 2] = np.clip(seg_aug[:, 2], a_min=1.0, a_max=None)  # ensure length is positive
+    cum = np.cumsum(seg_aug[:, 2])
+    seg_aug[:, 3] = np.concatenate([[0], cum[:-1]])
+    
+    return seg_aug, T
+
+def preprocess_edgeinfo(edgeinfo,args):
+    new_edgeinfo = {}
+
+    # edge_neighbors = build_edge_adjacency(edgeinfo)
+    # deg_in, deg_out = compute_node_degree(edgeinfo)
+    
+    for k, info in edgeinfo.items():
+        hw_ids = parse_highway_tags(info[0])
+        speed_bucket = parse_maxspeed(info[4 + args.data_config['n_poi_groups']])
+        lane_bucket = parse_lanes(info[4 + args.data_config['n_poi_groups'] + 1])
+        poi_self = np.array(info[4:4 + args.data_config['n_poi_groups']], dtype=np.float32)
+        
+        new_edgeinfo[k] = [
+            hw_ids,      # already parsed
+            info[1],
+            speed_bucket,  # parsed speed bucket
+            lane_bucket,         # parsed lanes
+            *poi_self,
+        ] # 1 + 1 + n_poi_groups = 1 + 1 + n_poi_groups features per edge
+
+    return new_edgeinfo
+    
+def parse_highway_tags(raw_val, max_tags=2):
+    UNCLASSIFIED_ID = 1
+
+    if isinstance(raw_val, list):
+        tags = raw_val
+    elif isinstance(raw_val, str) and raw_val.startswith("["):
+        try:
+            tags = raw_val.strip("[]").replace("'", "").split(",")
+        except:
+            tags = [raw_val]
+    else:
+        tags = [raw_val]
+
+    ids = [highway.get(t.strip(), UNCLASSIFIED_ID) for t in tags[:max_tags]]
+
+    if len(ids) < max_tags:
+        ids += [0] * (max_tags - len(ids))
+
+    return ids
 
 def collate_func(data, args, info_all):
-    edgeinfo, nodeinfo, scaler, scaler2 = info_all
+    edgeinfo, scaler = info_all
 
     time = torch.Tensor([d[-1] for d in data])
-    linkids = []
+    linkids = [np.asarray(l[1]) for l in data]
     dateinfo = []
     inds = []
-    for _, l in enumerate(data):
-        linkids.append(np.asarray(l[1]))
-        # dateinfo: week, date, time
-        
+
+    for l in data:
         wday = int(l[2])
-        doy = float(l[3])
-        minute = float(l[4])
-        doy_norm = doy / 365.0 * 2 * np.pi
-        minute_norm = minute / 1440.0 * 2 * np.pi
-        dateinfo.append([wday, doy_norm, minute_norm])
+        doy_raw = float(l[3])        # 1-365
+        minute_raw = float(l[4])
+        dateinfo.append([wday, doy_raw, minute_raw])
         inds.append(l[0])
-    lens = np.asarray([len(k) for k in linkids], dtype=np.int16)
     
-    def info(xs):
-        infos = []
-        length = 0
-        for x in xs:
+    lens = np.array([len(k) for k in linkids])
+    max_seq_len = lens.max()
+    
+    feature_dim = 4 + 2 + args.data_config['n_poi_groups'] # highway(2), length(1), cum_length(1), pois(n_poi_groups)
+    
+    def get_infos(xs):
+        L = len(xs)
+        
+        seg = np.zeros((L, feature_dim), dtype=np.float32)
+        
+        for i, x in enumerate(xs):
             info = edgeinfo[x]
-            infot = []
-            infot.append(highway[info[0]] if info[0] in highway.keys() else 0)
-            infot.append(info[1])
-            infot.append(length)
-            length += info[1]
-            try:
-                infot += [nodeinfo[info[2]][0],nodeinfo[info[2]][1],nodeinfo[info[3]][0],nodeinfo[info[3]][1]]
-            except:
-                print(info)
-            infos.append(np.asarray(infot))
-            # highway length sumoflength gps4
-
-        return infos
-
-    con_links = np.concatenate([info(b) for b in linkids], dtype='object')
-    # print(merge_start_mask.shape, merge_pad_mask.shape)
-    mask = np.arange(lens.max()) < lens[:, None]
-    padded = np.zeros((*mask.shape, 1+2+4), dtype=np.float32)
-    con_links[:, 1:3] = scaler.transform(con_links[:, 1:3])
-    con_links[:, 3:7] = scaler2.transform(con_links[:, 3:7])
-
-    padded[mask] = con_links
+            
+            seg[i, :2] = info[0]
+            seg[i,2] = info[1] # length
+            seg[i, 4] = info[2] # speed_bucket
+            seg[i, 5] = info[3] # lane_bucket
+            
+            seg[i, 6:6+args.data_config['n_poi_groups']] = info[4:4+args.data_config['n_poi_groups']]
+            
+        lengths = seg[:, 2]
+        cum = np.cumsum(lengths)
+        seg[:, 3] = np.concatenate([[0], cum[:-1]])
+        
+        return seg
     
-    return {'links':torch.from_numpy(padded),
-            'dateinfo': torch.from_numpy(np.asarray(dateinfo, dtype=np.float32)),
-            'lens':torch.LongTensor(lens), 
-            'inds': inds, 
-            }, time
+    total_len = sum(lens)
+    
+    all_segments = np.zeros((total_len, feature_dim), dtype=np.float32)
+
+    ptr = 0
+    for b in linkids:
+        seg = get_infos(b)
+        L = len(seg)
+        
+        all_segments[ptr:ptr+L] = seg
+        ptr += L
+        
+    feature_dim = all_segments.shape[1]
+    
+    padded_clean = np.zeros((len(data), max_seq_len, feature_dim), dtype=np.float32)
+    padded_aug   = np.zeros_like(padded_clean)
+    
+    curr_idx = 0
+    Ts = []
+    
+    for i, l in enumerate(lens):
+        seg_raw = all_segments[curr_idx : curr_idx + l].copy()
+        
+        seg_aug_raw, T = augment_segments(seg_raw)
+        
+        seg_clean_scaled = seg_raw.copy()
+        seg_clean_scaled[:, 2:4] = scaler.transform(seg_clean_scaled[:, 2:4])
+        padded_clean[i, :l] = seg_clean_scaled
+        
+        seg_aug_scaled = seg_aug_raw.copy()
+        seg_aug_scaled[:, 2:4] = scaler.transform(seg_aug_scaled[:, 2:4])
+        padded_aug[i, :T] = seg_aug_scaled
+        
+        Ts.append(T)  
+        curr_idx += l
+        
+    augment_lens = np.array(Ts)
+    
+    max_aug_len = padded_aug.shape[1]
+    augment_padding_mask = np.arange(max_aug_len)[None, :] >= augment_lens[:, None] # True where padding, False where data
+    
+    return {
+        'links_clean': torch.from_numpy(padded_clean),
+        'links_aug': torch.from_numpy(padded_aug),
+        'augment_mask': torch.from_numpy(augment_padding_mask),
+        'dateinfo': torch.from_numpy(np.asarray(dateinfo, dtype=np.float32)),
+        'lens': torch.LongTensor(lens), 
+        'inds': inds, 
+    }, time
 
 class BatchSampler:
     def __init__(self, dataset, batch_size):
@@ -116,8 +389,11 @@ def load_datadoct_pre(args):
     
     with open(os.path.join(args.absPath,args.data_config['edges_dir']), 'rb') as f:
         edgeinfo = pickle.load(f)
-    with open(os.path.join(args.absPath,args.data_config['nodes_dir']), 'rb') as f:
-        nodeinfo = pickle.load(f)
+    new_edgeinfo = preprocess_edgeinfo(edgeinfo, args)
+    
+    
+    # with open(os.path.join(args.absPath,args.data_config['nodes_dir']), 'rb') as f:
+    #     nodeinfo = pickle.load(f)
     
     if "porto" in args.dataset:
         scaler = StandardScaler()
@@ -139,10 +415,22 @@ def load_datadoct_pre(args):
         scaler2.fit([[0,0,0,0]])
         scaler2.mean_ = [104.06379941,  30.65844312, 104.06381633,  30.65845601]
         scaler2.scale_ = [0.03480474, 0.02717924, 0.03484908, 0.02719959]
+        
+    elif "hcm" in args.dataset:
+        scaler = StandardScaler()
+        scaler.fit([[0,0]])
+        scaler.mean_ = [94.526, 5133.815]
+        scaler.scale_ = [110.723, 3745.034]
+        
+        scaler2 = StandardScaler()
+        scaler2.fit([[0,0,0,0]])
+
+        scaler2.mean_ = [106.665882,  10.781017, 106.665884,  10.781012]
+        scaler2.scale_ = [0.022315, 0.025133, 0.022316, 0.025130]
     else:
         ValueError("Wrong Dataset Name")
 
-    info_all = [edgeinfo, nodeinfo, scaler, scaler2]
+    info_all = [new_edgeinfo, scaler]
 
 
 class Datadict(Dataset):
@@ -189,7 +477,11 @@ def create_model(args):
     absPath = os.path.join(os.path.dirname(__file__), "model_config.json")
     with open(absPath) as file:
         model_config = json.load(file)[args.model]
+        
     args.model_config = model_config
+    args.model_config['n_poi_groups'] = args.data_config["n_poi_groups"]
+    args.model_config['r_seconds'] = args.data_config["r_seconds"]
+    
     return Cl_TTE(**model_config)
         
 

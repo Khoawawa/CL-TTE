@@ -4,7 +4,50 @@ import math
 import torch
 import torch.nn as nn
 import math
+class RotaryPositionalEmbeddings(nn.Module):
+    def __init__(self, d: int, base: int = 10_000):
+        super().__init__()
+        self.base = base
+        self.d = d
+        self.cos_cached = None
+        self.sin_cached = None
 
+    def _build_cache(self, seq_len, device):
+        if self.cos_cached is not None and seq_len <= self.cos_cached.shape[0]:
+            return
+
+        theta = 1. / (self.base ** (torch.arange(0, self.d, 2, device=device).float() / self.d))
+
+        pos = torch.arange(seq_len, device=device).float()
+
+        idx_theta = torch.einsum('t,d->td', pos, theta)
+        idx_theta2 = torch.cat([idx_theta, idx_theta], dim=-1)
+
+        # (T, D)
+        self.cos_cached = idx_theta2.cos().float()
+        self.sin_cached = idx_theta2.sin().float()
+
+    def _neg_half(self, x):
+        d_2 = self.d // 2
+        return torch.cat([-x[..., d_2:], x[..., :d_2]], dim=-1)
+
+    def forward(self, x):
+        # x: (B, H, T, D)
+        B, H, T, D = x.shape
+
+        self._build_cache(T, x.device)
+
+        cos = self.cos_cached[:T]  # (T, D)
+        sin = self.sin_cached[:T]
+
+        # reshape for broadcast
+        cos = cos[None, None, :, :]  # (1,1,T,D)
+        sin = sin[None, None, :, :]
+
+        x_rot = self._neg_half(x)
+
+        return x * cos + x_rot * sin
+    
 class CyclicalTimeEncoding(nn.Module):
     def __init__(self, d_model: int = 256, period: float = 1440.0):
         super().__init__()
@@ -14,7 +57,9 @@ class CyclicalTimeEncoding(nn.Module):
         self.period = period
         half_dim = d_model // 2
 
-        frequencies = torch.arange(1, half_dim + 1).float()
+        frequencies = torch.exp(
+            torch.linspace(0, math.log(half_dim), half_dim)
+        )
         self.register_buffer("frequencies", frequencies)  # (half_dim,)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -31,7 +76,7 @@ class CyclicalTimeEncoding(nn.Module):
         x = x.unsqueeze(-1)
 
         # (B, half_dim)
-        x_arg = (2 * math.pi * x * self.frequencies) / self.period
+        x_arg = (2 * math.pi * x.unsqueeze(-1)) / self.period * self.frequencies
 
         pe = torch.cat(
             [torch.sin(x_arg), torch.cos(x_arg)],
@@ -70,7 +115,7 @@ class PositionalEncodingIndex(nn.Module):
                             (matches the format expected by TransformerEncoderLayer src_key_padding_mask)
         """
         seq_len = x.shape[1]
-        pe = self.pe[:, :seq_len, :]           # (1, T, D)
+        pe = self.pe[:, :seq_len, :].clone()           # (1, T, D)
 
         if padding_mask is not None:
             # Zero positional encoding where we will mask attention anyway
