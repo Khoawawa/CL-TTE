@@ -71,14 +71,12 @@ class Cl_TTE(nn.Module):
             segment_rep_clean, 
             segment_rep_aug, 
             src_key_padding_mask=padding_mask, 
-            src_key_augment_padding_mask=src_key_aug_padding_mask,
-            y_true=y_true
+            src_key_augment_padding_mask=src_key_aug_padding_mask
         )
         if profiler: profiler.stop()
         
         # TEMPORAL ENCODING
         if profiler: profiler.start('GRU')
-        
         h = segment_rep_clean + self.ctx_proj_to_seq(h_msm)
         h = h.transpose(0,1).contiguous() # (T, B, D)
         h,_ = self.temporal_block(h, lens) # (B, T, D)

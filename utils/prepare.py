@@ -127,52 +127,54 @@ def augment_segments(seg,
                      p_highway=0.1,
                      p_poi=0.15,
                      p_seg=0.2,
-                     max_merge_edges=2
+                     max_percent_merge= 0.2
                      ):
 
     seg_aug = seg.copy() # (T, F)
     T, F = seg_aug.shape
     
     if T > 5: # Only merge edges if the trajectory is reasonably long
-        num_merges = np.random.randint(1, max_merge_edges + 1)
-        
-        for _ in range(num_merges):
-            T = seg_aug.shape[0]
-            if T <= 3:
-                break
-            idx = np.random.randint(0, T-1)
-            len_a = seg_aug[idx, 2]
-            len_b = seg_aug[idx+1, 2]
-            total_len = len_a + len_b
-            # feature aggregation
-            # len
-            seg_aug[idx, 2] = total_len
+        total_len = seg_aug[:, 2].sum()
+        budget = total_len * max_percent_merge
+        absorbed = 0.0
+        i = 0
+        while i < seg_aug.shape[0] - 1 and absorbed < budget:
+            if np.random.rand() < 0.5:
+                len_a = seg_aug[i, 2]
+                len_b = seg_aug[i + 1, 2]
 
-            # TODO: merge speed and lanes by taking average
-            spd_a = seg_aug[idx, 4]
-            spd_b = seg_aug[idx+1, 4]
-            if spd_a > 0 and spd_b > 0:
-                seg_aug[idx, 4] = round((spd_a * len_a + spd_b * len_b) / total_len)
-            elif spd_a > 0:
-                seg_aug[idx, 4] = spd_a
+                if absorbed + len_b > budget:
+                    i += 1
+                    continue
+
+                total = len_a + len_b
+                seg_aug[i, 2] = total
+
+                spd_a, spd_b = seg_aug[i, 4], seg_aug[i+1, 4]
+                if spd_a > 0 and spd_b > 0:
+                    seg_aug[i, 4] = round((spd_a * len_a + spd_b * len_b) / total)
+                elif spd_a > 0:
+                    seg_aug[i, 4] = spd_a
+                else:
+                    seg_aug[i, 4] = spd_b
+
+                ln_a, ln_b = seg_aug[i, 5], seg_aug[i+1, 5]
+                if ln_a > 0 and ln_b > 0:
+                    seg_aug[i, 5] = round((ln_a * len_a + ln_b * len_b) / total)
+                elif ln_a > 0:
+                    seg_aug[i, 5] = ln_a
+                else:
+                    seg_aug[i, 5] = ln_b
+
+                if len_b > len_a:
+                    seg_aug[i, :2] = seg_aug[i+1, :2]
+
+                seg_aug[i, 6:] += seg_aug[i+1, 6:]
+                seg_aug = np.delete(seg_aug, i+1, axis=0)
+                absorbed += len_b
             else:
-                seg_aug[idx, 4] = spd_b
-            ln_a = seg_aug[idx, 5]
-            ln_b = seg_aug[idx+1, 5]
-            if ln_a > 0 and ln_b > 0:
-                seg_aug[idx, 5] = round((ln_a * len_a + ln_b * len_b) / total_len)
-            elif ln_a > 0:
-                seg_aug[idx, 5] = ln_a
-            else:
-                seg_aug[idx, 5] = ln_b
-            if len_b > len_a:
-                seg_aug[idx, :2] = seg_aug[idx+1, :2] # adopt highway type of the longer edge
+                i += 1
                 
-            # pois
-            seg_aug[idx, 6:] = seg_aug[idx, 6:] + seg_aug[idx+1, 6:] # merge pois
-            
-            seg_aug = np.delete(seg_aug, idx+1, axis=0) # remove the absorbed edge
-            
     T = seg_aug.shape[0]
 
     # --- Highway dropout ---
@@ -188,7 +190,6 @@ def augment_segments(seg,
     seg_aug[:, 6:] = poi
 
     # --- Segment dropout (feature masking, NOT removal) ---
-    T = seg_aug.shape[0]
     seg_mask = np.random.rand(T) < p_seg
 
     # prevent full collapse
@@ -200,9 +201,10 @@ def augment_segments(seg,
     seg_aug[seg_mask, 5] = 0  # lane bucket → unknown
     seg_aug[seg_mask, 6:] = 0  # pois → no pois
     
-    noise = np.random.normal(0, 5.0, size=seg_aug[:, 2].shape)
-    seg_aug[:, 2] += noise
+    noise = np.random.normal(1.0, 0.03, size=seg_aug[:, 2].shape)  # ±3% multiplicative
+    seg_aug[:, 2] *= noise
     seg_aug[:, 2] = np.clip(seg_aug[:, 2], a_min=1.0, a_max=None)  # ensure length is positive
+    
     cum = np.cumsum(seg_aug[:, 2])
     seg_aug[:, 3] = np.concatenate([[0], cum[:-1]])
     

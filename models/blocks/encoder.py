@@ -5,9 +5,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models.base.PositionalEncoding import PositionalEncoding1D, CyclicalTimeEncoding
 from models.loss.contrastive_loss import HardContrastiveLoss
-from models.loss.reconstruction_loss import ReconstructionLoss
 from models.blocks.cl import MSM
 from models.blocks.poi import PoiEncoder, GlobalFiLM
+from models.blocks.moco import MoCo
 
 from models.profiler.profiler import BlockTimer
 
@@ -16,61 +16,17 @@ class ContrastiveEncoder(nn.Module):
         super().__init__()
         self.r_seconds = r_seconds
         self.contrastive_temperature = contrastive_temperature
-
-        self.msm = MSM(d_model,nhead,dropout,nlayer)
         
-        self.proj = nn.Sequential(
-            nn.Linear(d_model, d_model * 2),
-            nn.GELU(),
-            nn.Linear(d_model * 2, d_model)
+        self.moco = MoCo(
+            encoder_q= MSM(d_model,nhead,dropout,nlayer),
+            encoder_k= MSM(d_model, nhead, dropout, nlayer),
+            nemb=d_model,
+            nout=d_model,
+            queue_size=4096,
+            temperature=contrastive_temperature
         )
-        self.loss = HardContrastiveLoss(temperature=self.contrastive_temperature)
-        
-    def create_pos_mask(self, y_true):
-        # y_true: (B, T)
-        if y_true.dim() == 2:
-            y_true = y_true.squeeze(-1)
-            
-        y_true = y_true.detach()
-        B = y_true.size(0)
-        device = y_true.device
-        
-        dist = torch.abs(y_true.unsqueeze(0) - y_true.unsqueeze(1))
-        
-        pos_base = (dist <= self.r_seconds).float()   # (B, B)
-        pos_base.fill_diagonal_(0)
-        # expand to 2B
-        pos_mask = torch.zeros(2*B, 2*B, device=y_true.device)
-
-        # ori ↔ ori
-        pos_mask[:B, :B] = pos_base
-
-        # aug inherits ori
-        pos_mask[B:, :B] = pos_base
-        pos_mask[:B, B:] = pos_base
-
-        # DO NOT include aug ↔ aug
-        # pos_mask[B:, B:] = 0
-
-        # identity pairs (strong positives)
-        idx = torch.arange(B, device=y_true.device)
-        pos_mask[idx, idx+B] = 1.0
-        pos_mask[idx+B, idx] = 1.0
-
-        return pos_mask
     
-    def masked_mean_pooling(self, x, pad_mask):
-        # x: (B, T, D)
-        # pad_mask: (B, T) with 0 = valid, 1 = padding
-        valid_mask = ~pad_mask
-        # sum
-        x = x * valid_mask.unsqueeze(-1)
-        
-        denom = valid_mask.sum(dim=1, keepdim=True).clamp(min=1)  # (B, 1)
-        
-        return x.sum(dim=1) / denom
-    
-    def forward(self,x,x_aug,src_key_padding_mask=None,src_key_augment_padding_mask=None,y_true=None):
+    def forward(self,x,x_aug,src_key_padding_mask=None,src_key_augment_padding_mask=None):
         # x: (B, T, D)
         # x_aug: (B, T, D)
         
@@ -86,26 +42,17 @@ class ContrastiveEncoder(nn.Module):
         else:
             augment_pad_mask = src_key_augment_padding_mask
         # encode
-        if self.training:
-            x_all = torch.cat([x, x_aug], dim=0)
-            pad_mask_all = torch.cat([pad_mask, augment_pad_mask], dim=0)
+        kwargs_q = {"x" : x, "src_key_padding_mask": pad_mask}
+        kwargs_k = {"x": x_aug, "src_key_padding_mask": augment_pad_mask}
             
-            h_all = self.msm(x_all, pad_mask_all)
-            z_all = self.masked_mean_pooling(h_all, pad_mask_all)
-            
-            pos_mask = self.create_pos_mask(y_true)
-            z_all_proj = self.proj(z_all)
-            l_cl = self.loss(z_all_proj, pos_mask)
-            
-            h_msm = h_all[:B]
-            
-            l_combined = l_cl            
-        else:
-            h_msm = self.msm(x,pad_mask)
-            
-            l_combined = None
+        logits, labels, h_msm = self.moco(kwargs_q,kwargs_k)
         
-        return h_msm, l_combined
+        if self.training:    
+            l_cl = self.moco.loss(logits, labels)         
+        else:
+            l_cl = None
+        
+        return h_msm, l_cl
     
     
 class SegmentEncoder(nn.Module):
