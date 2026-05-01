@@ -14,17 +14,17 @@ class PoiEncoder(nn.Module):
             nn.GELU()
         )
         
-        self.poi_gate = nn.Sequential(
-            nn.Linear(1, n_poi_groups),
-            nn.ReLU(),
-            nn.Linear(n_poi_groups, embed_dim),
-            nn.Sigmoid()
-        )
+        # self.poi_gate = nn.Sequential(
+        #     nn.Linear(1, n_poi_groups),
+        #     nn.ReLU(),
+        #     nn.Linear(n_poi_groups, embed_dim),
+        #     nn.Sigmoid()
+        # )
         
         self.register_buffer("poi_ids", torch.arange(1,n_poi_groups + 1))
         
     
-    def forward(self, poi_counts, culm_lens):
+    def forward(self, poi_counts):
         # poi_counts : (B, T, G)
         B, T, _ = poi_counts.shape
         
@@ -49,12 +49,8 @@ class PoiEncoder(nn.Module):
         
         combined = torch.cat([mean_rep, max_rep], dim=-1)
         
-        combined_proj = self.proj(combined)
-        culm_lens = culm_lens.unsqueeze(-1)
-        progress = culm_lens / culm_lens[:,-1:,:] # (B, T, 1)
-        gate = self.poi_gate(progress) # (B, T, D)
+        return self.proj(combined)
         
-        return combined_proj * gate
 
 class TimeScaler(nn.Module):
     def __init__(self, time_dim, embed_dim, n_layers):
