@@ -50,8 +50,9 @@ class PoiEncoder(nn.Module):
         combined = torch.cat([mean_rep, max_rep], dim=-1)
         
         combined_proj = self.proj(combined)
-        
-        gate = self.poi_gate(culm_lens) # (B, T, D)
+        culm_lens = culm_lens.unsqueeze(-1)
+        progress = culm_lens / culm_lens[:,-1:,:] # (B, T, 1)
+        gate = self.poi_gate(progress) # (B, T, D)
         
         return combined_proj * gate
 
