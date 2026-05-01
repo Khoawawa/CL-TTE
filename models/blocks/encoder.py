@@ -176,7 +176,7 @@ class SegmentEncoder(nn.Module):
         
         # gpsrep = torch.tanh(self.gpsembed(links[:, :, 4:8].float())) # 16
         
-        poirep = self.poi_embed(links[:, :, 6:6+self.n_poi_groups]) # (2B, T, poi_dim)
+        poirep = self.poi_embed(links[:, :, 6:6+self.n_poi_groups],links[:,:,3]) # (2B, T, poi_dim)
         len_feats = links[:, :, 2:4] # (2B, T, 2)
         
         modulate_feats = torch.cat(
