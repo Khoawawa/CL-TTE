@@ -200,11 +200,7 @@ def augment_segments(seg,
     seg_aug[seg_mask, 4] = 0  # speed bucket → unknown
     seg_aug[seg_mask, 5] = 0  # lane bucket → unknown
     seg_aug[seg_mask, 6:] = 0  # pois → no pois
-    
-    noise = np.random.normal(1.0, 0.03, size=seg_aug[:, 2].shape)  # ±3% multiplicative
-    seg_aug[:, 2] *= noise
-    seg_aug[:, 2] = np.clip(seg_aug[:, 2], a_min=1.0, a_max=None)  # ensure length is positive
-    
+
     cum = np.cumsum(seg_aug[:, 2])
     seg_aug[:, 3] = np.concatenate([[0], cum[:-1]])
     
