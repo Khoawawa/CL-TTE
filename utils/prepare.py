@@ -528,7 +528,10 @@ def create_loss(args):
             preds = kwargs['predict']
             labels = kwargs['truth']
             preds = torch.squeeze(preds, 1)
-            smoothL1 = SmoothL1Loss(reduction='mean', beta = args.loss_val).forward(preds, labels)
+            
+            log_preds = torch.log1p(preds.clamp(min=0.0))
+            log_labels = torch.log1p(labels.clamp(min=0.0))
+            smoothL1 = SmoothL1Loss(reduction='mean', beta = args.loss_val).forward(log_preds, log_labels)
             return smoothL1
 
     else:
