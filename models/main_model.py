@@ -22,8 +22,7 @@ class Cl_TTE(nn.Module):
         
         # TEMPORAL BLOCK
         self.ctx_proj_to_seq = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.LayerNorm(d_model)
+            nn.Linear(d_model, d_model)
         )
         self.temporal_block = LayerNormGRU(input_dim=d_model, hidden_dim=d_model, num_layers=seq_layer)
         
