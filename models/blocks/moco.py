@@ -12,7 +12,7 @@ class MoCo(nn.Module):
     https://arxiv.org/abs/1911.05722
     """
     def __init__(self, encoder_q, encoder_k, nemb, nout,
-                queue_size, mmt = 0.999, temperature = 0.07, tau_I = 10):
+                queue_size, mmt = 0.999, temperature = 0.07, tau_I = 5):
         super(MoCo, self).__init__()
 
         self.queue_size = queue_size
