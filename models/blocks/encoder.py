@@ -26,7 +26,7 @@ class ContrastiveEncoder(nn.Module):
             temperature=contrastive_temperature
         )
     
-    def forward(self,x,x_aug,src_key_padding_mask=None,src_key_augment_padding_mask=None, y=None):
+    def forward(self,x,x_aug,src_key_padding_mask=None,src_key_augment_padding_mask=None, y=None,args=None):
         # x: (B, T, D)
         # x_aug: (B, T, D)
         
@@ -45,7 +45,7 @@ class ContrastiveEncoder(nn.Module):
         kwargs_q = {"x" : x, "src_key_padding_mask": pad_mask}
         kwargs_k = {"x": x_aug, "src_key_padding_mask": augment_pad_mask}
             
-        logits, softweights, h_msm = self.moco(kwargs_q,kwargs_k, y_q=y)
+        logits, softweights, h_msm = self.moco(kwargs_q,kwargs_k, y_q=y,p95 = args.data_config['p95_time_diff'])
         
         if self.training:    
             l_cl = self.moco.loss(logits, softweights)         

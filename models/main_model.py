@@ -45,7 +45,7 @@ class Cl_TTE(nn.Module):
             nn.Linear(mlp_in_dim//2, 1)
         )
         
-    def forward(self, inputs: torch.Tensor, y_true: torch.Tensor, profiler: BlockTimer=None):
+    def forward(self, inputs: torch.Tensor, y_true: torch.Tensor, args,profiler: BlockTimer=None):
         # inputs: 
         # links: [B, T, 17] -> (highway1, highway2, len, culm_len, start_lat, start_lon, end_lat, end_lon, POI*9)
         # dateinfo : [B, 3]
@@ -80,7 +80,8 @@ class Cl_TTE(nn.Module):
             segment_rep_aug, 
             src_key_padding_mask=padding_mask, 
             src_key_augment_padding_mask=src_key_aug_padding_mask,
-            y=y_true
+            y=y_true,
+            args=args
         )
         if profiler: profiler.stop()
         
