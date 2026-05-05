@@ -96,7 +96,7 @@ class MoCo(nn.Module):
         counts = valid_mask.sum(dim=1).clamp(min=1e-6)
 
         return summed / counts
-    def forward(self, kwargs_q, kwargs_k, y_q=None, p95 = None):
+    def forward(self, kwargs_q, kwargs_k, y_q=None):
         mask_q = kwargs_q.get("src_key_padding_mask")
         mask_k = kwargs_k.get("src_key_padding_mask")
         # compute query features
@@ -139,8 +139,6 @@ class MoCo(nn.Module):
         if y_q is not None:
             # y_q: (N,), queue_y: (K,)
             time_diff = torch.abs(y_q.unsqueeze(1) - self.queue_y.unsqueeze(0))
-            p95 = p95 if p95 is not None else 915
-            time_diff = (time_diff / p95).clamp(0, 1)
             soft_weights = 2 * torch.sigmoid(-self.tau_I * time_diff)
         
         self._dequeue_and_enqueue(k,y_q)

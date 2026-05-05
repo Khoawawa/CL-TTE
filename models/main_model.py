@@ -8,7 +8,7 @@ from models.blocks.poi import GlobalFiLM
 from models.profiler.profiler import BlockTimer
     
 class Cl_TTE(nn.Module):
-    def __init__(self, d_model, nhead, seq_layer, r_seconds,n_poi_groups=9,contrastive_temperature=0.25):
+    def __init__(self, d_model, nhead, seq_layer, r_seconds, tau_I,n_poi_groups=9,contrastive_temperature=0.25):
         super().__init__()
         
         self.d_model = d_model
@@ -18,7 +18,7 @@ class Cl_TTE(nn.Module):
         self.enc = SegmentEncoder(d_model=d_model, n_poi_groups=n_poi_groups, nlayers=seq_layer)
         
         # CONTRASTIVE BLOCK
-        self.contrast_enc = ContrastiveEncoder(d_model=d_model,nlayer=seq_layer,nhead=nhead,r_seconds=r_seconds,contrastive_temperature=contrastive_temperature)
+        self.contrast_enc = ContrastiveEncoder(d_model=d_model,nlayer=seq_layer,nhead=nhead,r_seconds=r_seconds,contrastive_temperature=contrastive_temperature, tau_I=tau_I)
         
         # film modulator
         self.film = GlobalFiLM(
@@ -45,7 +45,7 @@ class Cl_TTE(nn.Module):
             nn.Linear(mlp_in_dim//2, 1)
         )
         
-    def forward(self, inputs: torch.Tensor, y_true: torch.Tensor, args,profiler: BlockTimer=None):
+    def forward(self, inputs: torch.Tensor, y_true: torch.Tensor,profiler: BlockTimer=None):
         # inputs: 
         # links: [B, T, 17] -> (highway1, highway2, len, culm_len, start_lat, start_lon, end_lat, end_lon, POI*9)
         # dateinfo : [B, 3]
@@ -80,8 +80,7 @@ class Cl_TTE(nn.Module):
             segment_rep_aug, 
             src_key_padding_mask=padding_mask, 
             src_key_augment_padding_mask=src_key_aug_padding_mask,
-            y=y_true,
-            args=args
+            y=y_true
         )
         if profiler: profiler.stop()
         

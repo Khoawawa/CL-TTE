@@ -12,9 +12,9 @@ from models.blocks.moco import MoCo
 from models.profiler.profiler import BlockTimer
 
 class ContrastiveEncoder(nn.Module):
-    def __init__(self, d_model, nhead, r_seconds=45, dropout=0.1, nlayer=4, contrastive_temperature=0.25):
+    def __init__(self, d_model, nhead, tau_I,r_seconds=45, dropout=0.1, nlayer=4, contrastive_temperature=0.25):
         super().__init__()
-        self.r_seconds = r_seconds
+        self.tau_I = tau_I
         self.contrastive_temperature = contrastive_temperature
         
         self.moco = MoCo(
@@ -23,10 +23,11 @@ class ContrastiveEncoder(nn.Module):
             nemb=d_model,
             nout=d_model,
             queue_size=4096,
-            temperature=contrastive_temperature
+            temperature=contrastive_temperature,
+            tau_I=tau_I
         )
     
-    def forward(self,x,x_aug,src_key_padding_mask=None,src_key_augment_padding_mask=None, y=None,args=None):
+    def forward(self,x,x_aug,src_key_padding_mask=None,src_key_augment_padding_mask=None, y=None):
         # x: (B, T, D)
         # x_aug: (B, T, D)
         
@@ -45,7 +46,7 @@ class ContrastiveEncoder(nn.Module):
         kwargs_q = {"x" : x, "src_key_padding_mask": pad_mask}
         kwargs_k = {"x": x_aug, "src_key_padding_mask": augment_pad_mask}
             
-        logits, softweights, h_msm = self.moco(kwargs_q,kwargs_k, y_q=y,p95 = args.data_config['p95_time_diff'])
+        logits, softweights, h_msm = self.moco(kwargs_q,kwargs_k, y_q=y)
         
         if self.training:    
             l_cl = self.moco.loss(logits, softweights)         
