@@ -26,7 +26,7 @@ class ContrastiveEncoder(nn.Module):
             temperature=contrastive_temperature
         )
     
-    def forward(self,x,x_aug,src_key_padding_mask=None,src_key_augment_padding_mask=None):
+    def forward(self,x,x_aug,src_key_padding_mask=None,src_key_augment_padding_mask=None, y=None):
         # x: (B, T, D)
         # x_aug: (B, T, D)
         
@@ -45,10 +45,10 @@ class ContrastiveEncoder(nn.Module):
         kwargs_q = {"x" : x, "src_key_padding_mask": pad_mask}
         kwargs_k = {"x": x_aug, "src_key_padding_mask": augment_pad_mask}
             
-        logits, labels, h_msm = self.moco(kwargs_q,kwargs_k)
+        logits, softweights, h_msm = self.moco(kwargs_q,kwargs_k, y_q=y)
         
         if self.training:    
-            l_cl = self.moco.loss(logits, labels)         
+            l_cl = self.moco.loss(logits, softweights)         
         else:
             l_cl = None
         
@@ -99,13 +99,13 @@ class SegmentEncoder(nn.Module):
         # links: (2B, T, D_in) 2 * [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2, poi*n, speed, lanes]
         # dateinfo: (B, 3)
         # mask: (2B, T)
-        B, T, _ = links.shape
-        
-        weekrep   = self.weekembed(dateinfo[:, 0]).squeeze(1)
-        daterep   = self.dateembed(dateinfo[:, 1]).squeeze(1)
-        timerep   = self.timeembed(dateinfo[:, 2]).squeeze(1)
+        Bx2, T, _ = links.shape
+        B = Bx2 // 2
+        # since we use the same dateinfo for both original and augmented, we only need to compute it once
+        weekrep   = self.weekembed(dateinfo[:B, 0]).squeeze(1)
+        daterep   = self.dateembed(dateinfo[:B, 1]).squeeze(1)
+        timerep   = self.timeembed(dateinfo[:B, 2]).squeeze(1)
         datetimerep = torch.cat([weekrep, daterep, timerep], dim=-1) # (B, datetime_dim)
-        datetimerep_expand = torch.cat([datetimerep, datetimerep], dim=0) # (2B, datetime_dim)
         # spatial features
         highwayrep1 = self.highwayembed(links[:, :, 0].long()) # 6
         highwayrep2 = self.highwayembed(links[:, :, 1].long()) # 6
@@ -131,5 +131,5 @@ class SegmentEncoder(nn.Module):
         )
         features_proj = self.represent(features) # (2B,T,seq_hidden_dim)
         
-        return features_proj, datetimerep
+        return features_proj, datetimerep # (2B, T, seq_hidden_dim), (B, datetime_dim)
     

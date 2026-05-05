@@ -65,18 +65,22 @@ class Cl_TTE(nn.Module):
         
         links = torch.cat([links_clean, links_aug], dim=0) # (2B, T, input_dim)
         if profiler: profiler.start('enc')
-        segment_rep, datetimerep = self.enc(links,dateinfo, profiler)  # (2B, T, D)
+        segment_rep, datetimerep = self.enc(links,dateinfo, profiler)  # (2B, T, D), (B, datetime_dim)
         if profiler: profiler.stop()
         
         segment_rep_clean, segment_rep_aug = torch.chunk(segment_rep, 2, dim=0) # (B, T, D)
         
         # CONTRASTIVE LEARNING
+        if y_true.dim() == 2:
+            y_true = y_true.squeeze(-1)
+            
         if profiler: profiler.start('contrast')
         h_msm, l_cl = self.contrast_enc(
             segment_rep_clean, 
             segment_rep_aug, 
             src_key_padding_mask=padding_mask, 
-            src_key_augment_padding_mask=src_key_aug_padding_mask
+            src_key_augment_padding_mask=src_key_aug_padding_mask,
+            y=y_true
         )
         if profiler: profiler.stop()
         

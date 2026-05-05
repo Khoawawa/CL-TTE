@@ -40,9 +40,11 @@ class MoCo(nn.Module):
         # create the queue
         self.register_buffer("queue", torch.randn(nout, queue_size))
         self.queue = nn.functional.normalize(self.queue, dim = 0)
+        
 
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
 
+        self.register_buffer("queue_y", torch.zeros(queue_size))
 
     @torch.no_grad()
     def _momentum_update_key_encoder(self):
@@ -57,7 +59,7 @@ class MoCo(nn.Module):
 
 
     @torch.no_grad()
-    def _dequeue_and_enqueue(self, keys):
+    def _dequeue_and_enqueue(self, keys, y = None):
 
         batch_size = keys.shape[0]
 
@@ -66,6 +68,8 @@ class MoCo(nn.Module):
         
         if ptr + batch_size <= self.queue_size:
             self.queue[:, ptr:ptr + batch_size] = keys.T
+            if y is not None:
+                self.queue_y[ptr:ptr + batch_size] = y
         else:
             self.queue[:, ptr:self.queue_size] = keys.T[:, 0:self.queue_size-ptr]
             self.queue[:, 0:batch_size-self.queue_size+ptr] = keys.T[:, self.queue_size-ptr:]
@@ -93,7 +97,7 @@ class MoCo(nn.Module):
         counts = valid_mask.sum(dim=1).clamp(min=1e-6)
 
         return summed / counts
-    def forward(self, kwargs_q, kwargs_k):
+    def forward(self, kwargs_q, kwargs_k, y_q=None):
         mask_q = kwargs_q.get("src_key_padding_mask")
         mask_k = kwargs_k.get("src_key_padding_mask")
         # compute query features
@@ -119,19 +123,37 @@ class MoCo(nn.Module):
         # logits: Nx(1+K)
         logits = torch.cat([l_pos, l_neg], dim=1)
 
-        # apply temperature
-        logits /= self.temperature
+        # # apply temperature
+        # logits /= self.temperature
 
-        # labels: positive key indicators
-        labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
+        # # labels: positive key indicators
+        # labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
 
-        # dequeue and enqueue
-        self._dequeue_and_enqueue(k)
+        # # dequeue and enqueue
+        # self._dequeue_and_enqueue(k)
+        
 
-        return logits, labels, h
+        # return logits, labels, h
 
-    def loss(self, logit, target):
-        return self.criterion(logit, target)
+        # soft assignment
+        soft_weights = None
+        if y_q is not None:
+            # y_q: (N,), queue_y: (K,)
+            time_diff = torch.abs(y_q.unsqueeze(1) - self.queue_y.unsqueeze(0))
+            soft_weights = 2 * torch.sigmoid(-self.tau_I * time_diff)
+        
+        self._dequeue_and_enqueue(k,y_q)
+
+        return logits, soft_weights, h
+        
+    def loss(self, logit, soft_weights):
+        log_probs = nn.functional.log_softmax(logit, dim=1) # (N, 1+K) --> log(softmax(N, 1+K))
+        l_pos = -log_probs[:, 0]
+        if soft_weights is None:
+            return l_pos.mean()
+        l_neg = -(soft_weights * log_probs[:, 1:]).sum(dim=1) # (N,)
+        
+        return (l_pos + l_neg).mean()
 
 
 class Projector(nn.Module):
