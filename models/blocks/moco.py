@@ -12,14 +12,13 @@ class MoCo(nn.Module):
     https://arxiv.org/abs/1911.05722
     """
     def __init__(self, encoder_q, encoder_k, nemb, nout,
-                queue_size, mmt = 0.999, temperature = 0.07):
+                queue_size, mmt = 0.999, temperature = 0.07, tau_I = 10):
         super(MoCo, self).__init__()
 
         self.queue_size = queue_size
         self.mmt = mmt
         self.temperature = temperature
-
-        self.criterion = nn.CrossEntropyLoss()
+        self.tau_I = tau_I
 
         # create the encoders
         # num_classes is the output fc dimension
