@@ -148,7 +148,7 @@ class MoCo(nn.Module):
         return logits, soft_weights, h
         
     def loss(self, logits, soft_weights=None):
-        logits = logits / self.temperature  # make sure this is here
+        # logits = logits / self.temperature  # make sure this is here
         log_probs = nn.functional.log_softmax(logits, dim=1)  # (N, 1+K)
         
         if soft_weights is None:
