@@ -8,7 +8,7 @@ from models.blocks.poi import GlobalFiLM
 from models.profiler.profiler import BlockTimer
     
 class Cl_TTE(nn.Module):
-    def __init__(self, d_model, nhead, seq_layer, r_seconds, tau_I,n_poi_groups=9,contrastive_temperature=0.25):
+    def __init__(self, d_model, nhead, seq_layer, tau_I,n_poi_groups=9,contrastive_temperature=0.25):
         super().__init__()
         
         self.d_model = d_model
@@ -18,7 +18,7 @@ class Cl_TTE(nn.Module):
         self.enc = SegmentEncoder(d_model=d_model, n_poi_groups=n_poi_groups, nlayers=seq_layer)
         
         # CONTRASTIVE BLOCK
-        self.contrast_enc = ContrastiveEncoder(d_model=d_model,nlayer=seq_layer,nhead=nhead,r_seconds=r_seconds,contrastive_temperature=contrastive_temperature, tau_I=tau_I)
+        self.contrast_enc = ContrastiveEncoder(d_model=d_model,nlayer=seq_layer,nhead=nhead,contrastive_temperature=contrastive_temperature, tau_I=tau_I)
         
         # film modulator
         self.film = GlobalFiLM(
