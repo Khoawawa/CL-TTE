@@ -89,16 +89,9 @@ class SegmentEncoder(nn.Module):
         modulate_dim = 2 * highway_dim + poi_dim + speed_dim + lanes_dim
         feature_dim = 2 + modulate_dim
         
-        # film modulator
-        self.film = GlobalFiLM(
-            time_dim=self.datetime_dim,
-            embed_dim=modulate_dim,
-            n_layers=nlayers
-        )
         
         self.represent = nn.Sequential(
-            nn.Linear(feature_dim, d_model),
-            nn.LayerNorm(d_model),
+            nn.Linear(feature_dim, d_model)
         )
         
     def forward(self, links, dateinfo, profiler: BlockTimer=None): 
@@ -125,24 +118,14 @@ class SegmentEncoder(nn.Module):
         
         poirep = self.poi_embed(links[:, :, 6:6+self.n_poi_groups]) # (2B, T, poi_dim)
         len_feats = links[:, :, 2:4] # (2B, T, 2)
-        
-        modulate_feats = torch.cat(
-            [
-                highwayrep,
-                poirep,
-                speedrep,
-                lanesrep,
-            ],
-            dim=-1
-        )
-        
-        # FILM CONDITIONING
-        modulate_feats = self.film(modulate_feats,datetimerep_expand)
-        
+
         features = torch.cat(
             [
                 len_feats, # len and cumlen
-                modulate_feats
+                highwayrep,
+                poirep,
+                speedrep,
+                lanesrep
             ],
             dim=-1
         )

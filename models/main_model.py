@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models.blocks.encoder import SegmentEncoder, ContrastiveEncoder
 from models.blocks.LayerNormGRU import LayerNormGRU
-
+from models.blocks.poi import GlobalFiLM
 
 from models.profiler.profiler import BlockTimer
     
@@ -20,10 +20,15 @@ class Cl_TTE(nn.Module):
         # CONTRASTIVE BLOCK
         self.contrast_enc = ContrastiveEncoder(d_model=d_model,nlayer=seq_layer,nhead=nhead,r_seconds=r_seconds,contrastive_temperature=contrastive_temperature)
         
+        # film modulator
+        self.film = GlobalFiLM(
+            time_dim=self.enc.datetime_dim,
+            embed_dim=d_model,
+            n_layers=seq_layer
+        )
         # TEMPORAL BLOCK
         self.ctx_proj_to_seq = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.LayerNorm(d_model)
+            nn.Linear(d_model, d_model)
         )
         self.temporal_block = LayerNormGRU(input_dim=d_model, hidden_dim=d_model, num_layers=seq_layer)
         
@@ -78,6 +83,7 @@ class Cl_TTE(nn.Module):
         # TEMPORAL ENCODING
         if profiler: profiler.start('GRU')
         h = segment_rep_clean + self.ctx_proj_to_seq(h_msm)
+        h = self.film(h, datetimerep)
         h = h.transpose(0,1).contiguous() # (T, B, D)
         h,_ = self.temporal_block(h, lens) # (B, T, D)
         h = h.transpose(0,1).contiguous()
