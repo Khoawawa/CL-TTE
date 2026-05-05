@@ -12,7 +12,7 @@ from models.blocks.moco import MoCo
 from models.profiler.profiler import BlockTimer
 
 class ContrastiveEncoder(nn.Module):
-    def __init__(self, d_model, nhead, tau_I,r_seconds=45, dropout=0.1, nlayer=4, contrastive_temperature=0.25):
+    def __init__(self, d_model, nhead, tau_I, dropout=0.1, nlayer=4, contrastive_temperature=0.25):
         super().__init__()
         self.tau_I = tau_I
         self.contrastive_temperature = contrastive_temperature
