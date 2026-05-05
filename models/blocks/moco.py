@@ -70,8 +70,12 @@ class MoCo(nn.Module):
             if y is not None:
                 self.queue_y[ptr:ptr + batch_size] = y
         else:
-            self.queue[:, ptr:self.queue_size] = keys.T[:, 0:self.queue_size-ptr]
-            self.queue[:, 0:batch_size-self.queue_size+ptr] = keys.T[:, self.queue_size-ptr:]
+            right = self.queue_size - ptr
+            self.queue[:, ptr:] = keys.T[:, :right]
+            self.queue[:, :batch_size - right] = keys.T[:, right:]
+            if y is not None:
+                self.queue_y[ptr:] = y[:right]
+                self.queue_y[:batch_size - right] = y[right:]
 
         # replace the keys at ptr (dequeue and enqueue)
         ptr = (ptr + batch_size) % self.queue_size  # move pointer
