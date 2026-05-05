@@ -147,14 +147,19 @@ class MoCo(nn.Module):
 
         return logits, soft_weights, h
         
-    def loss(self, logit, soft_weights):
-        log_probs = nn.functional.log_softmax(logit, dim=1) # (N, 1+K) --> log(softmax(N, 1+K))
-        l_pos = -log_probs[:, 0]
-        if soft_weights is None:
-            return l_pos.mean()
-        l_neg = -(soft_weights * log_probs[:, 1:]).sum(dim=1) # (N,)
+    def loss(self, logits, soft_weights=None):
+        logits = logits / self.temperature  # make sure this is here
+        log_probs = nn.functional.log_softmax(logits, dim=1)  # (N, 1+K)
         
-        return (l_pos + l_neg).mean()
+        if soft_weights is None:
+            return -log_probs[:, 0].mean()
+        
+        # normalize so targets sum to 1
+        targets = torch.cat([torch.ones(logits.size(0), 1, device=logits.device), soft_weights], dim=1)
+        targets = targets / targets.sum(dim=1, keepdim=True)
+        
+        loss = -(targets * log_probs).sum(dim=1).mean()
+        return loss
 
 
 class Projector(nn.Module):
