@@ -75,7 +75,7 @@ class Cl_TTE(nn.Module):
             y_true = y_true.squeeze(-1)
             
         if profiler: profiler.start('contrast')
-        h_msm, l_cl = self.contrast_enc(
+        h_msm, logits, soft_weights = self.contrast_enc(
             segment_rep_clean, 
             segment_rep_aug, 
             src_key_padding_mask=padding_mask, 
@@ -104,5 +104,8 @@ class Cl_TTE(nn.Module):
         z_time = torch.concat([z, datetimerep], dim=-1) # (B,D + 33)
         t = self.regression_mlp(z_time) # (B, 1)
         
-        return t, l_cl
+        return t, logits, soft_weights
+    
+    def contrastive_loss(self, logits, soft_weights, epoch, max_epoch):
+        return self.contrast_enc.moco.loss(logits, soft_weights, epoch, max_epoch)
     

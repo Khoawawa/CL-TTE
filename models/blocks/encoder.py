@@ -48,12 +48,7 @@ class ContrastiveEncoder(nn.Module):
             
         logits, softweights, h_msm = self.moco(kwargs_q,kwargs_k, y_q=y)
         
-        if self.training:    
-            l_cl = self.moco.loss(logits, softweights)         
-        else:
-            l_cl = None
-        
-        return h_msm, l_cl
+        return h_msm, logits, softweights
     
     
 class SegmentEncoder(nn.Module):

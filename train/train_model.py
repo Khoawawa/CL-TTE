@@ -82,10 +82,11 @@ def train_model(model:         nn.Module,
  
                     with torch.set_grad_enabled(phase == 'train'):
                         with torch.amp.autocast(args.device):
-                            output, loss_cl = model(features, truth_data)
+                            output, logits, soft_weights = model(features, truth_data)
                             loss_eta        = loss_func(truth=truth_data, predict=output)
  
-                            if phase == 'train' and loss_cl is not None:
+                            if phase == 'train' and logits is not None:
+                                loss_cl = model.contrastive_loss(logits, soft_weights, epoch, 10)
                                 loss = loss_balancer(loss_eta, loss_cl, args.beta)
                             else:
                                 loss = loss_eta

@@ -5,6 +5,7 @@
 
 import torch
 import torch.nn as nn
+import numpy as np
 
 class MoCo(nn.Module):
     """
@@ -106,7 +107,7 @@ class MoCo(nn.Module):
         # compute query features
         h = self.encoder_q(**kwargs_q)  # queries: BxTxd_model
         if not self.training:
-            return None, None, h
+            return h, None, None
         pooled_h = self.masked_mean_pool(h, mask_q)  # (B, d_model)
         q = self.mlp_q(pooled_h)  # queries: NxC
         q = nn.functional.normalize(q, dim=1)
@@ -141,9 +142,9 @@ class MoCo(nn.Module):
         # soft assignment
         soft_weights = None
         if y_q is not None:
-            # y_q: (N,), queue_y: (K,)
-            time_diff = torch.abs(y_q.unsqueeze(1) - self.queue_y.unsqueeze(0))
-            soft_weights = 2 * torch.sigmoid(-self.tau_I * time_diff)
+            with torch.amp.autocast(device_type='cuda', enabled=False):
+                time_diff = torch.abs(y_q.float().unsqueeze(1) - self.queue_y.float().unsqueeze(0))
+                soft_weights = 2 * torch.sigmoid(-self.tau_I * time_diff)
         
         self._dequeue_and_enqueue(k,y_q)
         
@@ -156,20 +157,19 @@ class MoCo(nn.Module):
 
         return logits, soft_weights, h
         
-    def loss(self, logits, soft_weights=None):
+    def loss(self, logits, soft_weights=None,epoch=0, max_epoch=10):
         # logits = logits / self.temperature  # make sure this is here
         log_probs = nn.functional.log_softmax(logits, dim=1)  # (N, 1+K)
         
+        l_pos = -log_probs[:, 0]
         if soft_weights is None:
-            return -log_probs[:, 0].mean()
+            return l_pos.mean()
         
-        # normalize so targets sum to 1
-        targets = torch.cat([torch.ones(logits.size(0), 1, device=logits.device), soft_weights], dim=1)
-        targets = targets / targets.sum(dim=1, keepdim=True)
+        alpha = (np.exp(epoch/max_epoch) - 1) / (np.e - 1)
         
-        loss = -(targets * log_probs).sum(dim=1).mean()
+        l_neg = -(soft_weights * log_probs[:, 1:]).sum(dim=1)
         
-        return loss
+        return (l_pos + alpha * l_neg).mean()
 
 
 class Projector(nn.Module):
