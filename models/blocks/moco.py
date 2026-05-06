@@ -107,7 +107,7 @@ class MoCo(nn.Module):
         # compute query features
         h = self.encoder_q(**kwargs_q)  # queries: BxTxd_model
         if not self.training:
-            return h, None, None
+            return None, None, h
         pooled_h = self.masked_mean_pool(h, mask_q)  # (B, d_model)
         q = self.mlp_q(pooled_h)  # queries: NxC
         q = nn.functional.normalize(q, dim=1)
@@ -148,12 +148,12 @@ class MoCo(nn.Module):
         
         self._dequeue_and_enqueue(k,y_q)
         
-        print(f"tau_I: {self.tau_I}")
-        print(f"temperature: {self.temperature}")  
-        print(f"l_pos mean: {l_pos.mean():.4f}")
-        print(f"l_neg mean: {l_neg.mean():.4f}")
-        print(f"soft_weights mean: {soft_weights.mean():.4f} min: {soft_weights.min():.4f} max: {soft_weights.max():.4f}")
-        print(f"queue_y zeros: {(self.queue_y == 0).float().mean():.3f}")
+        # print(f"tau_I: {self.tau_I}")
+        # print(f"temperature: {self.temperature}")  
+        # print(f"l_pos mean: {l_pos.mean():.4f}")
+        # print(f"l_neg mean: {l_neg.mean():.4f}")
+        # print(f"soft_weights mean: {soft_weights.mean():.4f} min: {soft_weights.min():.4f} max: {soft_weights.max():.4f}")
+        # print(f"queue_y zeros: {(self.queue_y == 0).float().mean():.3f}")
 
         return logits, soft_weights, h
         
