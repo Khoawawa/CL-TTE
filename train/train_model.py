@@ -86,7 +86,7 @@ def train_model(model:         nn.Module,
                             loss_eta        = loss_func(truth=truth_data, predict=output)
  
                             if phase == 'train' and logits is not None:
-                                loss_cl = model.contrastive_loss(logits, soft_weights, epoch, 10)
+                                loss_cl = model.contrastive_loss(logits, soft_weights, epoch, 3)
                                 loss = loss_balancer(loss_eta, loss_cl, args.beta)
                             else:
                                 loss = loss_eta
