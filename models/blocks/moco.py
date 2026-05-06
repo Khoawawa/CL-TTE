@@ -169,7 +169,7 @@ class MoCo(nn.Module):
         # normalize to keep scale bounded regardless of queue size
         # l_neg = -(soft_weights * log_probs[:, 1:]).sum(dim=1)
         nonzero = (soft_weights > 1e-3).float().sum(dim=1).clamp(min=1)
-        l_neg = -(soft_weights * log_probs[:, 1:]).sum(dim=1) / nonzero
+        l_neg = -(soft_weights * log_probs[:, 1:]).sum(dim=1) #/ nonzero
         print(f"l_pos: {l_pos.mean():.4f}")
         print(f"l_neg: {l_neg.mean():.4f}")
         print(f"soft_weights nonzero: {(soft_weights > 1e-3).float().sum(dim=1).mean():.1f}")
