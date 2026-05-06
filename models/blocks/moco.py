@@ -165,7 +165,7 @@ class MoCo(nn.Module):
         if soft_weights is None:
             return l_pos.mean()
         
-        alpha = (np.exp(epoch/max_epoch) - 1) / (np.e - 1)
+        alpha = min(1,(np.exp(epoch/max_epoch) - 1) / (np.e - 1))
         
         l_neg = -(soft_weights * log_probs[:, 1:]).sum(dim=1)
         
