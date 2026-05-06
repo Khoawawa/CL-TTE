@@ -146,6 +146,13 @@ class MoCo(nn.Module):
             soft_weights = 2 * torch.sigmoid(-self.tau_I * time_diff)
         
         self._dequeue_and_enqueue(k,y_q)
+        
+        print(f"tau_I: {self.tau_I}")
+        print(f"temperature: {self.temperature}")  
+        print(f"l_pos mean: {l_pos.mean():.4f}")
+        print(f"l_neg mean: {l_neg.mean():.4f}")
+        print(f"soft_weights mean: {soft_weights.mean():.4f} min: {soft_weights.min():.4f} max: {soft_weights.max():.4f}")
+        print(f"queue_y zeros: {(self.queue_y == 0).float().mean():.3f}")
 
         return logits, soft_weights, h
         
@@ -161,6 +168,7 @@ class MoCo(nn.Module):
         targets = targets / targets.sum(dim=1, keepdim=True)
         
         loss = -(targets * log_probs).sum(dim=1).mean()
+        
         return loss
 
 
