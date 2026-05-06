@@ -167,8 +167,7 @@ class MoCo(nn.Module):
         
         alpha = min(1,(np.exp(epoch/max_epoch) - 1) / (np.e - 1))
         # normalize to keep scale bounded regardless of queue size
-        l_neg = -(soft_weights * log_probs[:, 1:]).sum(dim=1) / self.queue_size
-        
+        l_neg = -(soft_weights * log_probs[:, 1:]).sum(dim=1)
         return (l_pos + alpha * l_neg).mean()
 
 
