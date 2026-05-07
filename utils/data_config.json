@@ -8,7 +8,7 @@
     "edges_dir": "mydata/nwk_hcm/hcm_edges_poi_speed_lanes.pkl",
     "nodes_dir": "mydata/nwk_hcm/hcm_nodes_new.pkl",
     "n_poi_groups": 9,
-    "r_seconds": 30,
+    "tau_I": 0.015,
     "gps_range": [106.6164137, 10.7301793, 106.7132954, 10.8524436]
   },
   "porto": {
