@@ -179,59 +179,59 @@ class LSTM(nn.Module):
 
         eta = self.regressor(h)
 
-        return eta
+        return eta, None, None
     
-    class MovingAverageMLP(nn.Module):
-        def __init__(self, tau_I, n_poi_groups, length_idx=2, hidden_dim=64):
-            super().__init__()
+class MovingAverageMLP(nn.Module):
+    def __init__(self, tau_I, n_poi_groups, length_idx=2, hidden_dim=64):
+        super().__init__()
 
-            self.length_idx = length_idx
+        self.length_idx = length_idx
 
-            # length-based statistics -> ETA
-            self.mlp = nn.Sequential(
-                nn.Linear(3, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, 1)
-            )
+        # length-based statistics -> ETA
+        self.mlp = nn.Sequential(
+            nn.Linear(3, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1)
+        )
 
-        def forward(self, inputs, y_true=None, profiler=None):
+    def forward(self, inputs, y_true=None, profiler=None):
 
-            # [B, T, F]
-            x = inputs['links_clean']
+        # [B, T, F]
+        x = inputs['links_clean']
 
-            # [B]
-            lens = inputs['lens']
+        # [B]
+        lens = inputs['lens']
 
-            # [B, T]
-            seg_lengths = x[:, :, self.length_idx]
+        # [B, T]
+        seg_lengths = x[:, :, self.length_idx]
 
-            max_len = seg_lengths.size(1)
+        max_len = seg_lengths.size(1)
 
-            # valid segment mask
-            mask = (
-                torch.arange(max_len, device=lens.device)
-                .unsqueeze(0)
-                < lens.unsqueeze(1)
-            ).float()
+        # valid segment mask
+        mask = (
+            torch.arange(max_len, device=lens.device)
+            .unsqueeze(0)
+            < lens.unsqueeze(1)
+        ).float()
 
-            seg_lengths = seg_lengths * mask
+        seg_lengths = seg_lengths * mask
 
-            # trajectory statistics
-            total_len = seg_lengths.sum(dim=1)
+        # trajectory statistics
+        total_len = seg_lengths.sum(dim=1)
 
-            avg_len = total_len / lens.clamp(min=1)
+        avg_len = total_len / lens.clamp(min=1)
 
-            num_segments = lens.float()
+        num_segments = lens.float()
 
-            # [B, 3]
-            features = torch.stack([
-                total_len,
-                avg_len,
-                num_segments
-            ], dim=-1)
+        # [B, 3]
+        features = torch.stack([
+            total_len,
+            avg_len,
+            num_segments
+        ], dim=-1)
 
-            eta = self.mlp(features)
+        eta = self.mlp(features)
 
-            return eta
+        return eta, None, None
