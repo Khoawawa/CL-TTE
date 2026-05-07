@@ -154,9 +154,7 @@ class ResidualGatedFiLM(nn.Module):
         x_norm = self.norm(x)
         
         
-        modulated = (1 + gamma) * x_norm + beta
+        updated = gamma * x_norm + beta
         
-        gated = gate * modulated + (1 - gate) * x_norm
-        
-        return x + gated
+        return x + (gate * updated)
 
