@@ -85,11 +85,11 @@ def train_model(model:         nn.Module,
                             output, logits, soft_weights = model(features, truth_data)
                             loss_eta        = loss_func(truth=truth_data, predict=output)
  
-                            if phase == 'train' and logits is not None:
-                                loss_cl = model.contrastive_loss(logits, soft_weights, epoch, 3)
-                                loss = loss_balancer(loss_eta, loss_cl, args.beta)
-                            else:
-                                loss = loss_eta
+                            # if phase == 'train' and logits is not None:
+                            #     loss_cl = model.contrastive_loss(logits, soft_weights, epoch, 3)
+                            #     loss = loss_balancer(loss_eta, loss_cl, args.beta)
+                            # else:
+                            loss = loss_eta
  
                         if phase == 'train':
                             optimizer.zero_grad()
@@ -105,11 +105,11 @@ def train_model(model:         nn.Module,
                             global_step += 1
  
                     # tqdm description
-                    cl_val = loss_cl.item() if (loss_cl is not None and phase == 'train') else None
-                    if cl_val is not None:
-                        desc = f"L1: {loss_eta.item():.4f}  CL: {cl_val:.4f}"
-                    else:
-                        desc = f"L1: {loss_eta.item():.4f}"
+                    # cl_val = loss_cl.item() if (loss_cl is not None and phase == 'train') else None
+                    # if cl_val is not None:
+                    #     desc = f"L1: {loss_eta.item():.4f}  CL: {cl_val:.4f}"
+                    # else:
+                    desc = f"L1: {loss_eta.item():.4f}"
  
                     tqdm_loader.set_description(
                         f"{phase} epoch {epoch} | "
