@@ -9,7 +9,7 @@ from torch.nn import SmoothL1Loss, MSELoss
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 from utils.util import StandardScaler2
-from models.main_model import Cl_TTE, MovingAverage, LSTM
+from models.main_model import Cl_TTE, MovingAverageMLP, LSTM
 import ast
 
 
@@ -486,7 +486,7 @@ def create_model(args):
     if args.model == 'CL_TTE':
         return Cl_TTE(**model_config)
     elif args.model == 'MovingAverage':
-        return MovingAverage(**model_config)
+        return MovingAverageMLP(**model_config)
     elif args.model == 'LSTM':
         return LSTM(**model_config)
         
