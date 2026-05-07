@@ -112,14 +112,19 @@ class Cl_TTE(nn.Module):
 class LSTM(nn.Module):
     def __init__(
         self,
-        input_dim,
+        n_poi_groups,tau_I,
         hidden_dim=128,
         num_layers=2,
         mlp_dim=64,
-        dropout=0.1
+        dropout=0.1,
     ):
         super().__init__()
-
+        
+        self.highwayembed = nn.Embedding(17, 6, padding_idx=0)
+        self.speedembed = nn.Embedding(11, 4, padding_idx=0)
+        self.lanesembed = nn.Embedding(7, 3, padding_idx=0)
+        
+        input_dim = 2 + 6 * 2 + 4 + 3
         self.lstm = nn.LSTM(
             input_size=input_dim,
             hidden_size=hidden_dim,
@@ -139,8 +144,16 @@ class LSTM(nn.Module):
 
         # [B, T, F]
         x = inputs['links_clean']
-        x_for_lstm = x[:, :, :self.lstm.input_size]
+        
+        highwayrep1 = self.highwayembed(x[:, :, 0].long()) # 6
+        highwayrep2 = self.highwayembed(x[:, :, 1].long()) # 6
+        highwayrep = torch.cat([highwayrep1, highwayrep2], dim=-1)
+        # speed and lanes
+        speedrep = self.speedembed(x[:, :, 4].long()) # 4
+        lanesrep = self.lanesembed(x[:, :, 5].long()) # 3
+        len_feats = x[:, :, 2:4] # 2
 
+        x_for_lstm = torch.cat([len_feats, highwayrep, speedrep, lanesrep], dim=-1)
         # [B]
         lens = inputs['lens']
 
@@ -168,37 +181,57 @@ class LSTM(nn.Module):
 
         return eta
     
-class MovingAverage(nn.Module):
-    def __init__(self, length_idx=2):
-        super().__init__()
-        self.length_idx = length_idx
+    class MovingAverageMLP(nn.Module):
+        def __init__(self, tau_I, n_poi_groups, length_idx=2, hidden_dim=64):
+            super().__init__()
 
-    def forward(self, inputs, y_true=None, profiler=None):
+            self.length_idx = length_idx
 
-        # [B, T, F]
-        x = inputs['links_clean']
+            # length-based statistics -> ETA
+            self.mlp = nn.Sequential(
+                nn.Linear(3, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, 1)
+            )
 
-        # [B]
-        lens = inputs['lens']
+        def forward(self, inputs, y_true=None, profiler=None):
 
-        # segment lengths: [B, T]
-        seg_lengths = x[:, :, self.length_idx]
+            # [B, T, F]
+            x = inputs['links_clean']
 
-        max_len = seg_lengths.size(1)
+            # [B]
+            lens = inputs['lens']
 
-        # mask padding
-        mask = (
-            torch.arange(max_len, device=lens.device)
-            .unsqueeze(0)
-            < lens.unsqueeze(1)
-        )
+            # [B, T]
+            seg_lengths = x[:, :, self.length_idx]
 
-        seg_lengths = seg_lengths * mask
+            max_len = seg_lengths.size(1)
 
-        # average segment length
-        avg_len = seg_lengths.sum(dim=1) / lens.clamp(min=1)
+            # valid segment mask
+            mask = (
+                torch.arange(max_len, device=lens.device)
+                .unsqueeze(0)
+                < lens.unsqueeze(1)
+            ).float()
 
-        # simple ETA estimate
-        eta = avg_len.unsqueeze(-1)
+            seg_lengths = seg_lengths * mask
 
-        return eta
+            # trajectory statistics
+            total_len = seg_lengths.sum(dim=1)
+
+            avg_len = total_len / lens.clamp(min=1)
+
+            num_segments = lens.float()
+
+            # [B, 3]
+            features = torch.stack([
+                total_len,
+                avg_len,
+                num_segments
+            ], dim=-1)
+
+            eta = self.mlp(features)
+
+            return eta

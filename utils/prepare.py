@@ -9,7 +9,7 @@ from torch.nn import SmoothL1Loss, MSELoss
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 from utils.util import StandardScaler2
-from models.main_model import Cl_TTE
+from models.main_model import Cl_TTE, MovingAverage, LSTM
 import ast
 
 
@@ -483,8 +483,13 @@ def create_model(args):
     args.model_config = model_config
     args.model_config['n_poi_groups'] = args.data_config["n_poi_groups"]
     args.model_config['tau_I'] = args.data_config["tau_I"]
-    
-    return Cl_TTE(**model_config)
+    if args.model == 'CL_TTE':
+        return Cl_TTE(**model_config)
+    elif args.model == 'MovingAverage':
+        return MovingAverage(**model_config)
+    elif args.model == 'LSTM':
+        return LSTM(**model_config)
+        
         
 
 def create_main_loss(loss_eta,loss_cl, args):

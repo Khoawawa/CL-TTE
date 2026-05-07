@@ -21,6 +21,12 @@
         "d_model": 128,
         "nhead": 8,
         "seq_layer": 4
+    },
+    "MovingAverage":{
+        "length_idx": 2
+    },
+    "LSTM":{
+        
     }
     
 }
