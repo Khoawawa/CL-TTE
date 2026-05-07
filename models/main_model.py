@@ -109,3 +109,96 @@ class Cl_TTE(nn.Module):
     def contrastive_loss(self, logits, soft_weights, epoch, max_epoch):
         return self.contrast_enc.moco.loss(logits, soft_weights, epoch, max_epoch)
     
+class LSTM(nn.Module):
+    def __init__(
+        self,
+        input_dim,
+        hidden_dim=128,
+        num_layers=2,
+        mlp_dim=64,
+        dropout=0.1
+    ):
+        super().__init__()
+
+        self.lstm = nn.LSTM(
+            input_size=input_dim,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0
+        )
+
+        self.regressor = nn.Sequential(
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, mlp_dim),
+            nn.ReLU(),
+            nn.Linear(mlp_dim, 1)
+        )
+
+    def forward(self, inputs, y_true=None, profiler=None):
+
+        # [B, T, F]
+        x = inputs['links_clean']
+        x_for_lstm = x[:, :, :self.lstm.input_size]
+
+        # [B]
+        lens = inputs['lens']
+
+        # pack padded sequence
+        packed = nn.utils.rnn.pack_padded_sequence(
+            x_for_lstm,
+            lengths=lens.cpu(),
+            batch_first=True,
+            enforce_sorted=False
+        )
+
+        if profiler:
+            profiler.start('lstm')
+
+        _, (h_n, _) = self.lstm(packed)
+
+        if profiler:
+            profiler.stop()
+
+        # final layer hidden state
+        # [B, hidden_dim]
+        h = h_n[-1]
+
+        eta = self.regressor(h)
+
+        return eta
+    
+class MovingAverage(nn.Module):
+    def __init__(self, length_idx=2):
+        super().__init__()
+        self.length_idx = length_idx
+
+    def forward(self, inputs, y_true=None, profiler=None):
+
+        # [B, T, F]
+        x = inputs['links_clean']
+
+        # [B]
+        lens = inputs['lens']
+
+        # segment lengths: [B, T]
+        seg_lengths = x[:, :, self.length_idx]
+
+        max_len = seg_lengths.size(1)
+
+        # mask padding
+        mask = (
+            torch.arange(max_len, device=lens.device)
+            .unsqueeze(0)
+            < lens.unsqueeze(1)
+        )
+
+        seg_lengths = seg_lengths * mask
+
+        # average segment length
+        avg_len = seg_lengths.sum(dim=1) / lens.clamp(min=1)
+
+        # simple ETA estimate
+        eta = avg_len.unsqueeze(-1)
+
+        return eta
