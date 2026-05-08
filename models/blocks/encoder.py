@@ -97,8 +97,8 @@ class SegmentEncoder(nn.Module):
         # mask: (2B, T)
         Bx2, T, _ = links.shape
         B = Bx2 // 2
-        print(dateinfo[:4, :])          # are values actually varying?
-        print(dateinfo[:, 2].unique())  # how many distinct times in a batch?
+        # print(dateinfo[:4, :])          # are values actually varying?
+        # print(dateinfo[:, 2].unique())  # how many distinct times in a batch?
         # since we use the same dateinfo for both original and augmented, we only need to compute it once
         weekrep   = self.weekembed(dateinfo[:B, 0]).squeeze(1)
         daterep   = self.dateembed(dateinfo[:B, 1]).squeeze(1)
