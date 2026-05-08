@@ -92,9 +92,14 @@ def _make_film_hook(state: _MonitorState, layer_idx: int):
         state.record(f"{tag}/x_in_norm",    x.norm(dim=-1).mean().item())
         state.record(f"{tag}/x_out_norm",   out.norm(dim=-1).mean().item())
 
-        # --- time_embed stats (drives every FiLM layer) ---
         state.record(f"film/time_embed_norm", time_embed.norm(dim=-1).mean().item())
-        state.record(f"film/time_embed_std",  time_embed.std().item())
+
+        # Add: inter-sample variance (does time_embed differ across the batch?)
+        state.record(f"film/time_embed_batch_var", time_embed.var(dim=0).mean().item())
+
+        # And: do gamma/beta actually differ across samples?
+        state.record(f"{tag}/gamma_batch_var", gamma.var(dim=0).mean().item())
+        state.record(f"{tag}/beta_batch_var",  beta.var(dim=0).mean().item())
 
     return hook
 
