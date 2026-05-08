@@ -105,7 +105,7 @@ class GlobalFiLM(nn.Module):
         
         self.layers = nn.ModuleList([
             nn.ModuleDict({
-                "film": ResidualGatedFiLM(time_dim, embed_dim),
+                "film": ResidualFiLM(time_dim, embed_dim),
                 "ffn": nn.Sequential(
                     nn.Linear(embed_dim, embed_dim * 2),
                     nn.GELU(),
@@ -131,13 +131,13 @@ class GlobalFiLM(nn.Module):
         return self.post_norm(x)
         
         
-class ResidualGatedFiLM(nn.Module):
+class ResidualFiLM(nn.Module):
     def __init__(self, time_dim, poi_dim):
         super().__init__()
         
         self.norm = nn.LayerNorm(poi_dim, elementwise_affine=False)
         
-        self.proj = nn.Linear(time_dim, poi_dim * 3)
+        self.proj = nn.Linear(time_dim, poi_dim * 2)
         
         nn.init.zeros_(self.proj.weight)
         nn.init.zeros_(self.proj.bias)
@@ -145,18 +145,15 @@ class ResidualGatedFiLM(nn.Module):
         # x: (B, T, D)
         # time_embed: (B,D_time)
         
-        gamma, beta, gate = self.proj(time_embed).chunk(3, dim=-1) # (B, D_time)
+        gamma, beta = self.proj(time_embed).chunk(2, dim=-1) # (B, D_time)
         
         gamma = gamma.unsqueeze(1) # (B, 1, D_time)
         beta = beta.unsqueeze(1) # (B, 1, D_time)
-        gate = torch.sigmoid(gate).unsqueeze(1) # (B, 1, D_time)
+        # gate = torch.sigmoid(gate).unsqueeze(1) # (B, 1, D_time)
         
         x_norm = self.norm(x)
         
+        return x + (gamma * x_norm + beta)
         
-        modulated = (1 + gamma) * x_norm + beta
-        
-        gated = gate * modulated + (1 - gate) * x_norm
-        
-        return x + gated
+    
 
