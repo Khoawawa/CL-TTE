@@ -36,7 +36,7 @@ class ContrastiveEncoder(nn.Module):
         with torch.amp.autocast(device_type='cuda', enabled=False):
             time_diff = torch.abs(y_true.unsqueeze(1) - y_true.unsqueeze(0))
             soft_weights = 2 * torch.sigmoid(-self.tau_I * time_diff)
-        
+        print(soft_weights.mean())
         mask = ~torch.eye(B, dtype=torch.bool, device=z_orig.device)
         
         l_neg = -(soft_weights * log_probs * mask).sum(dim=1) / (B - 1 + 1e-6)
