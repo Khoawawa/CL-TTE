@@ -21,7 +21,7 @@
     "nodes_dir": "mydata/network_porto/porto_nodes_new.pkl",
     "n_poi_groups": 12,
     "cl_scale": 1000,
-    "tau_I": 0.015,
+    "tau_I": 0.03,
     "gps_range": [-8.713, 41.117, -8.568, 41.227]
   }
 
