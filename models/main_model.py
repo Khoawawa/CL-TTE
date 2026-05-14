@@ -12,8 +12,8 @@ class Cl_TTE(nn.Module):
         super().__init__()
         
         self.d_model = d_model
-        assert seq_layer >= 2, "seq_layer should be at least 2 to have separate layers for mapping and anticipation"
-        
+        self.dropout1 = 0.1
+        self.dropout2 = 0.3
         # SEGMENT ENCODER
         self.enc = SegmentEncoder(d_model=d_model, n_poi_groups=n_poi_groups, nlayers=seq_layer)
         
