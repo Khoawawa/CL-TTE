@@ -7,29 +7,65 @@ from models.base.PositionalEncoding import PositionalEncoding1D, CyclicalTimeEnc
 from models.loss.contrastive_loss import HardContrastiveLoss
 from models.blocks.cl import MSM
 from models.blocks.poi import PoiEncoder, GlobalFiLM
-from models.blocks.moco import MoCo
+from models.blocks.moco import MoCo, Projector
 
 from models.profiler.profiler import BlockTimer
 
 class ContrastiveEncoder(nn.Module):
-    def __init__(self, d_model, nhead, tau_I, dropout=0.1, nlayer=4, contrastive_temperature=0.25):
+    def __init__(self, d_model, nhead, tau_I, dropout1=0.1, dropout2=0.3, nlayer=4, contrastive_temperature=0.25):
         super().__init__()
         self.tau_I = tau_I
         self.contrastive_temperature = contrastive_temperature
-        
-        self.moco = MoCo(
-            encoder_q= MSM(d_model,nhead,dropout,nlayer),
-            encoder_k= MSM(d_model, nhead, dropout, nlayer),
-            nemb=d_model,
-            nout=d_model,
-            queue_size=4096,
-            temperature=contrastive_temperature,
-            tau_I=tau_I
-        )
+        self.transformer = MSM(d_model,nhead,dropout1,dropout2,nlayer)
+        self.projector = Projector(d_model, d_model)
     
-    def forward(self,x,x_aug,src_key_padding_mask=None,src_key_augment_padding_mask=None, y=None):
+    def calculate_contrastive_loss(self, z_orig, z_aug, y_true):
+        B = z_orig.size(0)
+        
+        z_orig = F.normalize(z_orig, dim=-1)
+        z_aug = F.normalize(z_aug, dim=-1)
+        
+        sim = torch.matmul(z_orig, z_aug.T) / self.contrastive_temperature
+        
+        log_probs = F.log_softmax(sim, dim=-1)
+        
+        l_pos = -torch.diag(log_probs)
+        
+        y_true = y_true.squeeze(-1).detach().float()
+        
+        with torch.amp.autocast(device_type='cuda', enabled=False):
+            time_diff = torch.abs(y_true.unsqueeze(1) - y_true.unsqueeze(0))
+            soft_weights = 2 * torch.sigmoid(-self.tau_I * time_diff)
+        
+        mask = ~torch.eye(B, dtype=torch.bool, device=z_orig.device)
+        
+        l_neg = -(soft_weights * log_probs * mask).sum(dim=1) / (B - 1 + 1e-6)
+        
+        loss = (l_pos + l_neg).mean()
+        loss = torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))
+        
+        return loss
+        
+    def masked_mean_pool(self, x, padding_mask=None):
+        """
+        x : (B, T, D)
+        padding_mask : (B, T)  True = padded
+
+        returns
+        pooled : (B, D)
+        """
+        if padding_mask is None:
+            return x.mean(dim=1)
+
+        valid_mask = ~padding_mask
+        valid_mask = valid_mask.unsqueeze(-1).float()
+
+        summed = (x * valid_mask).sum(dim=1)
+        counts = valid_mask.sum(dim=1).clamp(min=1e-6)
+
+        return summed / counts
+    def forward(self,x,src_key_padding_mask=None, y=None):
         # x: (B, T, D)
-        # x_aug: (B, T, D)
         
         B, T, D = x.shape
         
@@ -38,17 +74,20 @@ class ContrastiveEncoder(nn.Module):
         else:
             pad_mask = src_key_padding_mask
         
-        if src_key_augment_padding_mask is None:
-            augment_pad_mask = torch.ones(x_aug.size(0), x_aug.size(1), dtype=torch.bool, device=x_aug.device)
-        else:
-            augment_pad_mask = src_key_augment_padding_mask
-        # encode
-        kwargs_q = {"x" : x, "src_key_padding_mask": pad_mask}
-        kwargs_k = {"x": x_aug, "src_key_padding_mask": augment_pad_mask}
-            
-        logits, softweights, h_msm = self.moco(kwargs_q,kwargs_k, y_q=y)
+        x_aug = x.clone()
         
-        return h_msm, logits, softweights
+        h_msm = self.transformer(x, src_key_padding_mask=pad_mask, use_heavy_dropout=False)
+        loss_cl = None
+        
+        if self.training:
+            h_msm_aug = self.transformer(x_aug, src_key_padding_mask=pad_mask, use_heavy_dropout=True)
+            
+            z_clean = self.projector(self.masked_mean_pool(h_msm, pad_mask))
+            z_aug = self.projector(self.masked_mean_pool(h_msm_aug, pad_mask))
+            
+            loss_cl = self.calculate_contrastive_loss(z_clean, z_aug, y)
+        
+        return h_msm, loss_cl
     
     
 class SegmentEncoder(nn.Module):
@@ -91,18 +130,12 @@ class SegmentEncoder(nn.Module):
         )
         
     def forward(self, links, dateinfo, profiler: BlockTimer=None): 
-        # this should accomodate both original and augmented
-        # links: (2B, T, D_in) 2 * [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2, poi*n, speed, lanes]
+        # links: (B, T, D_in) [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2, poi*n, speed, lanes]
         # dateinfo: (B, 3)
-        # mask: (2B, T)
-        Bx2, T, _ = links.shape
-        B = Bx2 // 2
-        # print(dateinfo[:4, :])          # are values actually varying?
-        # print(dateinfo[:, 2].unique())  # how many distinct times in a batch?
-        # since we use the same dateinfo for both original and augmented, we only need to compute it once
-        weekrep   = self.weekembed(dateinfo[:B, 0]).squeeze(1)
-        daterep   = self.dateembed(dateinfo[:B, 1]).squeeze(1)
-        timerep   = self.timeembed(dateinfo[:B, 2]).squeeze(1)
+        
+        weekrep   = self.weekembed(dateinfo[:, 0]).squeeze(1)
+        daterep   = self.dateembed(dateinfo[:, 1]).squeeze(1)
+        timerep   = self.timeembed(dateinfo[:, 2]).squeeze(1)
         datetimerep = torch.cat([weekrep, daterep, timerep], dim=-1) # (B, datetime_dim)
         # spatial features
         highwayrep1 = self.highwayembed(links[:, :, 0].long()) # 6
@@ -114,8 +147,8 @@ class SegmentEncoder(nn.Module):
         
         # gpsrep = torch.tanh(self.gpsembed(links[:, :, 4:8].float())) # 16
         
-        poirep = self.poi_embed(links[:, :, 6:6+self.n_poi_groups]) # (2B, T, poi_dim)
-        len_feats = links[:, :, 2:4] # (2B, T, 2)
+        poirep = self.poi_embed(links[:, :, 6:6+self.n_poi_groups]) # (B, T, poi_dim)
+        len_feats = links[:, :, 2:4] # (B, T, 2)
 
         features = torch.cat(
             [
@@ -127,7 +160,7 @@ class SegmentEncoder(nn.Module):
             ],
             dim=-1
         )
-        features_proj = self.represent(features) # (2B,T,seq_hidden_dim)
+        features_proj = self.represent(features) # (B,T,seq_hidden_dim)
         
-        return features_proj, datetimerep # (2B, T, seq_hidden_dim), (B, datetime_dim)
+        return features_proj, datetimerep # (B, T, seq_hidden_dim), (B, datetime_dim)
     

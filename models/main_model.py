@@ -26,10 +26,7 @@ class Cl_TTE(nn.Module):
             embed_dim=d_model,
             n_layers=seq_layer
         )
-        # TEMPORAL BLOCK
-        self.ctx_proj_to_seq = nn.Sequential(
-            nn.Linear(d_model, d_model)
-        )
+    
         self.temporal_block = LayerNormGRU(input_dim=d_model, hidden_dim=d_model, num_layers=seq_layer)
         
         # ATTENTION POOLING
@@ -51,9 +48,7 @@ class Cl_TTE(nn.Module):
         # dateinfo : [B, 3]
         # lens: [B]
         
-        links_clean = inputs['links_clean']
-        links_aug = inputs['links_aug']
-        src_key_aug_padding_mask = inputs['augment_mask']
+        links = inputs['links_clean']
         dateinfo = inputs['dateinfo']
         lens = inputs['lens']
         
@@ -63,31 +58,26 @@ class Cl_TTE(nn.Module):
         
         # ENCODING THE SEGMENTS
         
-        links = torch.cat([links_clean, links_aug], dim=0) # (2B, T, input_dim)
         if profiler: profiler.start('enc')
-        segment_rep, datetimerep = self.enc(links,dateinfo, profiler)  # (2B, T, D), (B, datetime_dim)
+        segment_rep, datetimerep = self.enc(links,dateinfo, profiler)  # (B, T, D), (B, datetime_dim)
         if profiler: profiler.stop()
-        
-        segment_rep_clean, segment_rep_aug = torch.chunk(segment_rep, 2, dim=0) # (B, T, D)
         
         # CONTRASTIVE LEARNING
         if y_true.dim() == 2:
             y_true = y_true.squeeze(-1)
             
         if profiler: profiler.start('contrast')
-        h_msm, logits, soft_weights = self.contrast_enc(
-            segment_rep_clean, 
-            segment_rep_aug, 
+        h_msm, loss_cl = self.contrast_enc(
+            segment_rep, 
             src_key_padding_mask=padding_mask, 
-            src_key_augment_padding_mask=src_key_aug_padding_mask,
             y=y_true
         )
         if profiler: profiler.stop()
         
         # TEMPORAL ENCODING
         if profiler: profiler.start('GRU')
-        h = self.film(segment_rep_clean, datetimerep)
-        h = h + self.ctx_proj_to_seq(h_msm)
+        h = self.film(segment_rep, datetimerep)
+        h = h + h_msm
         h = h.transpose(0,1).contiguous() # (T, B, D)
         h,_ = self.temporal_block(h, lens) # (B, T, D)
         h = h.transpose(0,1).contiguous()
@@ -104,8 +94,6 @@ class Cl_TTE(nn.Module):
         z_time = torch.concat([z, datetimerep], dim=-1) # (B,D + 33)
         t = self.regression_mlp(z_time) # (B, 1)
         
-        return t, logits, soft_weights
+        return t, loss_cl
     
-    def contrastive_loss(self, logits, soft_weights, epoch, max_epoch):
-        return self.contrast_enc.moco.loss(logits, soft_weights, epoch, max_epoch)
     

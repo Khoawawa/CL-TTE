@@ -308,36 +308,19 @@ def collate_func(data, args, info_all):
     feature_dim = all_segments.shape[1]
     
     padded_clean = np.zeros((len(data), max_seq_len, feature_dim), dtype=np.float32)
-    padded_aug   = np.zeros_like(padded_clean)
     
     curr_idx = 0
-    Ts = []
     
     for i, l in enumerate(lens):
         seg_raw = all_segments[curr_idx : curr_idx + l].copy()
         
-        seg_aug_raw, T = augment_segments(seg_raw)
+        seg_raw[:, 2:4] = scaler.transform(seg_raw[:, 2:4])
+        padded_clean[i, :l] = seg_raw
         
-        seg_clean_scaled = seg_raw.copy()
-        seg_clean_scaled[:, 2:4] = scaler.transform(seg_clean_scaled[:, 2:4])
-        padded_clean[i, :l] = seg_clean_scaled
-        
-        seg_aug_scaled = seg_aug_raw.copy()
-        seg_aug_scaled[:, 2:4] = scaler.transform(seg_aug_scaled[:, 2:4])
-        padded_aug[i, :T] = seg_aug_scaled
-        
-        Ts.append(T)  
         curr_idx += l
         
-    augment_lens = np.array(Ts)
-    
-    max_aug_len = padded_aug.shape[1]
-    augment_padding_mask = np.arange(max_aug_len)[None, :] >= augment_lens[:, None] # True where padding, False where data
-    
     return {
         'links_clean': torch.from_numpy(padded_clean),
-        'links_aug': torch.from_numpy(padded_aug),
-        'augment_mask': torch.from_numpy(augment_padding_mask),
         'dateinfo': torch.from_numpy(np.asarray(dateinfo, dtype=np.float32)),
         'lens': torch.LongTensor(lens), 
         'inds': inds, 
