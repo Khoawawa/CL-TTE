@@ -82,6 +82,9 @@ class ContrastiveEncoder(nn.Module):
         if self.training:
             h_msm_aug = self.transformer(x_aug, src_key_padding_mask=pad_mask, use_heavy_dropout=True)
             
+            noise = torch.rand_like(h_msm_aug) * 0.05
+            h_msm_aug = h_msm_aug + noise
+            
             z_clean = self.projector(self.masked_mean_pool(h_msm, pad_mask))
             z_aug = self.projector(self.masked_mean_pool(h_msm_aug, pad_mask))
             
