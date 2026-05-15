@@ -19,7 +19,8 @@ class ContrastiveEncoder(nn.Module):
         self.transformer = MSM(d_model,nhead,dropout1,dropout2,nlayer)
         self.projector = Projector(d_model, d_model)
         
-        self.cls_token = nn.Parameter(torch.randn(1, 1, d_model))
+        self.cls_token = nn.Parameter(torch.empty(1, 1, d_model))
+        nn.init.xavier_uniform_(self.cls_token)
     
     def calculate_contrastive_loss(self, z_orig, z_aug, y_true):
         B = z_orig.size(0)
