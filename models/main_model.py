@@ -77,8 +77,7 @@ class Cl_TTE(nn.Module):
         
         # TEMPORAL ENCODING
         if profiler: profiler.start('GRU')
-        h = self.film(segment_rep, datetimerep)
-        h = h + h_msm
+        h = self.film(h_msm, datetimerep)
         h = h.transpose(0,1).contiguous() # (T, B, D)
         h,_ = self.temporal_block(h, lens) # (B, T, D)
         h = h.transpose(0,1).contiguous()
