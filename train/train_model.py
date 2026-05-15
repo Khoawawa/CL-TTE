@@ -125,8 +125,8 @@ def train_model(model:          Cl_TTE,
 
                     # Optimized performance tracking: Append tensors on GPU directly
                     with torch.no_grad():
-                        predictions.append(output)
-                        targets.append(truth_data)
+                        predictions.append(output.detach().cpu())
+                        targets.append(truth_data.detach().cpu())
 
                     running_loss[phase] += loss.item() * truth_data.size(0)
 
@@ -135,8 +135,8 @@ def train_model(model:          Cl_TTE,
                 gc.collect()
 
                 # Concatenate on GPU exactly once, then drop to CPU arrays
-                predictions = torch.cat(predictions, dim=0).cpu().numpy()
-                targets     = torch.cat(targets, dim=0).cpu().numpy()
+                predictions = torch.cat(predictions, dim=0).numpy()
+                targets     = torch.cat(targets, dim=0).numpy()
                 
                 scores      = calculate_metrics(
                     predictions.reshape(predictions.shape[0], -1),
