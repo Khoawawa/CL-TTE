@@ -9,7 +9,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-
+from models.main_model import Cl_TTE
 from utils.metric import calculate_metrics
 from utils.util import save_model, to_var, get_warmup_cosine_scheduler, LossBalancer
 
@@ -18,7 +18,7 @@ def set_requires_grad(module, flag: bool):
     for p in module.parameters():
         p.requires_grad = flag
         
-def train_model(model:         nn.Module,
+def train_model(model:         Cl_TTE,
                 data_loaders:  Dict[str, DataLoader],
                 loss_func:     callable,
                 optimizer,
@@ -78,8 +78,13 @@ def train_model(model:         nn.Module,
                     steps      += truth_data.size(0)
                     features    = to_var(features,   args.device)
                     truth_data  = to_var(truth_data,  args.device)
-            
-                    
+
+                    if (phase == 'train' and not model.use_contrastive and global_step >= warmup_steps):
+                        model.use_contrastive = True
+                        loss_balancer.reset()
+                        print(f"\n Step {global_step}: Warmup completed. Enabling contrastive learning.\n")
+                        
+                        
                     with torch.set_grad_enabled(phase == 'train'):
                         with torch.amp.autocast(args.device):
                             output, loss_cl = model(features, truth_data)

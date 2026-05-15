@@ -75,7 +75,7 @@ class ContrastiveEncoder(nn.Module):
         counts = valid_mask.sum(dim=1).clamp(min=1e-6)
 
         return summed / counts
-    def forward(self,x,src_key_padding_mask=None, y=None):
+    def forward(self,x,src_key_padding_mask=None, y=None, use_contrastive=False):
         # x: (B, T, D)
         
         B, T, D = x.shape
@@ -88,7 +88,7 @@ class ContrastiveEncoder(nn.Module):
         h_msm = self.transformer(x, src_key_padding_mask=pad_mask, use_heavy_dropout=False)
         loss_cl = None
         
-        if self.training:
+        if self.training and use_contrastive:
             h_msm_aug = self.transformer(x, src_key_padding_mask=pad_mask, use_heavy_dropout=True)
             
             z_clean = self.projector(self.masked_mean_pool(h_msm, pad_mask))

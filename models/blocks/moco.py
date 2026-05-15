@@ -171,13 +171,16 @@ class MoCo(nn.Module):
         
         return (l_pos + alpha * l_neg).mean()
 
-
 class Projector(nn.Module):
     def __init__(self, nin, nout):
-        super(Projector, self).__init__()
-        self.mlp = nn.Sequential(nn.Linear(nin, nin), 
-                                        nn.ReLU(), 
-                                        nn.Linear(nin, nout))
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(nin, nin, bias=False),
+            nn.BatchNorm1d(nin),
+            nn.ReLU(),
+            nn.Linear(nin, nout, bias=False),
+            nn.BatchNorm1d(nout, affine=False)
+        )
         self.reset_parameter()
 
     def forward(self, x):
@@ -186,9 +189,7 @@ class Projector(nn.Module):
     def reset_parameter(self):
         def _weights_init(m):
             if isinstance(m, nn.Linear):
-                torch.nn.init.xavier_normal_(m.weight, gain=1.414)
-                torch.nn.init.zeros_(m.bias)
-        
+                # smaller gain — don't amplify variance
+                torch.nn.init.xavier_normal_(m.weight, gain=1.0)
         self.mlp.apply(_weights_init)
-        
 

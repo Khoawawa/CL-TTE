@@ -56,7 +56,9 @@ class LossBalancer:
             'ema_eta': self.ema_eta,
             'ema_cl':  self.ema_cl,
         }
- 
+    def reset(self):
+        self.ema_eta = None
+        self.ema_cl  = None
     def load_state_dict(self, d):
         self.ema_eta = d.get('ema_eta', None)
         self.ema_cl  = d.get('ema_cl',  None)

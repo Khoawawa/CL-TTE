@@ -8,12 +8,14 @@ from models.blocks.poi import GlobalFiLM
 from models.profiler.profiler import BlockTimer
     
 class Cl_TTE(nn.Module):
-    def __init__(self, d_model, nhead, seq_layer, tau_I,n_poi_groups=9,contrastive_temperature=0.25):
+    def __init__(self, d_model, nhead, seq_layer, tau_I,n_poi_groups=9,contrastive_temperature=0.25, use_contrastive=False):
         super().__init__()
         
         self.d_model = d_model
         self.dropout1 = 0.1
         self.dropout2 = 0.3
+        self.use_contrastive = use_contrastive
+        
         # SEGMENT ENCODER
         self.enc = SegmentEncoder(d_model=d_model, n_poi_groups=n_poi_groups, nlayers=seq_layer)
         
@@ -42,7 +44,7 @@ class Cl_TTE(nn.Module):
             nn.Linear(mlp_in_dim//2, 1)
         )
         
-    def forward(self, inputs: torch.Tensor, y_true: torch.Tensor,profiler: BlockTimer=None):
+    def forward(self, inputs: torch.Tensor, y_true: torch.Tensor, profiler: BlockTimer=None):
         # inputs: 
         # links: [B, T, 17] -> (highway1, highway2, len, culm_len, start_lat, start_lon, end_lat, end_lon, POI*9)
         # dateinfo : [B, 3]
@@ -70,7 +72,8 @@ class Cl_TTE(nn.Module):
         h_msm, loss_cl = self.contrast_enc(
             segment_rep, 
             src_key_padding_mask=padding_mask, 
-            y=y_true
+            y=y_true,
+            use_contrastive=self.use_contrastive
         )
         if profiler: profiler.stop()
         
