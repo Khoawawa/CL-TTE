@@ -59,7 +59,7 @@ class RoPEAttention(nn.Module):
         out = out.transpose(1, 2).contiguous().view(B, T, D)
         out = self.out(out)
         
-        return F.dropout(out, p=current_p, training=self.training)
+        return out
     
 class EncoderLayer(nn.Module):
     def __init__(self, d_model, nhead, dropout1=0.1, dropout2=0.3):
