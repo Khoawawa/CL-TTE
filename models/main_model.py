@@ -13,7 +13,7 @@ class Cl_TTE(nn.Module):
         
         self.d_model = d_model
         self.dropout1 = 0.1
-        self.dropout2 = 0.15
+        self.dropout2 = 0.3
         self.use_contrastive = use_contrastive
         
         # SEGMENT ENCODER
