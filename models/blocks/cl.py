@@ -80,7 +80,7 @@ class EncoderLayer(nn.Module):
         current_p = self.dropout2 if use_heavy_dropout else self.dropout1
         
         attn_out = self.attn(self.norm1(x), src_key_padding_mask=src_key_padding_mask, use_heavy_dropout=use_heavy_dropout)
-        x = x + attn_out
+        x = x + F.dropout(attn_out, p=current_p, training=self.training)
         
         ffn_out = self.ffn_act(self.ffn_linear1(self.norm2(x)))
         ffn_out = F.dropout(ffn_out, p=current_p, training=self.training)

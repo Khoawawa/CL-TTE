@@ -18,6 +18,8 @@ class ContrastiveEncoder(nn.Module):
         self.contrastive_temperature = contrastive_temperature
         self.transformer = MSM(d_model,nhead,dropout1,dropout2,nlayer)
         self.projector = Projector(d_model, d_model)
+        
+        self.cls_token = nn.Parameter(torch.randn(1, 1, d_model))
     
     def calculate_contrastive_loss(self, z_orig, z_aug, y_true):
         B = z_orig.size(0)
@@ -92,24 +94,32 @@ class ContrastiveEncoder(nn.Module):
         
         B, T, D = x.shape
         
-        if src_key_padding_mask is None:
-            pad_mask = torch.ones(x.size(0), x.size(1), dtype=torch.bool, device=x.device)
-        else:
-            pad_mask = src_key_padding_mask
+        cls_tokens = self.cls_token.expand(B, -1, -1)
+        x_with_cls = torch.cat([cls_tokens, x], dim=1)
         
-        h_msm = self.transformer(x, src_key_padding_mask=pad_mask, use_heavy_dropout=False)
+        if src_key_padding_mask is None:
+            pad_mask = torch.ones(B, T + 1, dtype=torch.bool, device=x.device)
+        else:
+            cls_mask = torch.zeros(B, 1, dtype=torch.bool, device=x.device)
+            pad_mask = torch.cat([cls_mask, src_key_padding_mask], dim=1)
+        
+        h_msm_full = self.transformer(x_with_cls, src_key_padding_mask=pad_mask, use_heavy_dropout=False)
         loss_cl = None
         
         if self.training and use_contrastive:
-            h_msm_aug = self.transformer(x, src_key_padding_mask=pad_mask, use_heavy_dropout=True)
+            h_msm_aug = self.transformer(x_with_cls, src_key_padding_mask=pad_mask, use_heavy_dropout=True)
             
-            print(f"h_clean vs h_aug cosine: {F.cosine_similarity(h_msm.mean(1), h_msm_aug.mean(1)).mean():.4f}")
-            z_clean = self.projector(self.masked_mean_pool(h_msm, pad_mask))
-            z_aug = self.projector(self.masked_mean_pool(h_msm_aug, pad_mask))
+            h_cls_orig = h_msm_full[:, 0, :]
+            h_cls_aug = h_msm_aug[:, 0, :]
+            
+            z_clean = self.projector(h_cls_orig)
+            z_aug = self.projector(h_cls_aug)
             
             loss_cl = self.calculate_contrastive_loss(z_clean, z_aug, y)
         
-        return h_msm, loss_cl
+        h_msm_seq = h_msm_full[:, 1:, :]
+        
+        return h_msm_seq, loss_cl
     
     
 class SegmentEncoder(nn.Module):
@@ -172,9 +182,8 @@ class SegmentEncoder(nn.Module):
         poirep = self.poi_embed(links[:, :, 6:6+self.n_poi_groups]) # (B, T, poi_dim)
         len_feats = links[:, :, 2:4] # (B, T, 2)
 
-        features = torch.cat(
+        semantic_feats = torch.cat(
             [
-                len_feats, # len and cumlen
                 highwayrep,
                 poirep,
                 speedrep,
@@ -182,7 +191,6 @@ class SegmentEncoder(nn.Module):
             ],
             dim=-1
         )
-        features_proj = self.represent(features) # (B,T,seq_hidden_dim)
-        
-        return features_proj, datetimerep # (B, T, seq_hidden_dim), (B, datetime_dim)
+        semantic_feats = self.represent(semantic_feats) # (B, T, d_model)
+        return semantic_feats, len_feats, datetimerep # (B, T, d_model), (B, T, 2), (B, datetime_dim)
     

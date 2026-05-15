@@ -29,7 +29,7 @@ class Cl_TTE(nn.Module):
             n_layers=seq_layer
         )
     
-        self.temporal_block = LayerNormGRU(input_dim=d_model, hidden_dim=d_model, num_layers=seq_layer)
+        self.temporal_block = LayerNormGRU(input_dim=d_model + 2, hidden_dim=d_model, num_layers=seq_layer)
         
         # ATTENTION POOLING
         self.pool_query = nn.Parameter(torch.randn(1,1,d_model))
@@ -61,7 +61,7 @@ class Cl_TTE(nn.Module):
         # ENCODING THE SEGMENTS
         
         if profiler: profiler.start('enc')
-        segment_rep, datetimerep = self.enc(links,dateinfo, profiler)  # (B, T, D), (B, datetime_dim)
+        semantic_feats, len_feats, datetimerep = self.enc(links,dateinfo, profiler)  # (B, T, D), (B, T, 2), (B, datetime_dim)
         if profiler: profiler.stop()
         
         # CONTRASTIVE LEARNING
@@ -70,8 +70,8 @@ class Cl_TTE(nn.Module):
             
         if profiler: profiler.start('contrast')
         h_msm, loss_cl = self.contrast_enc(
-            segment_rep, 
-            src_key_padding_mask=padding_mask, 
+            semantic_feats,
+            src_key_padding_mask=padding_mask,
             y=y_true,
             use_contrastive=self.use_contrastive
         )
@@ -79,9 +79,10 @@ class Cl_TTE(nn.Module):
         
         # TEMPORAL ENCODING
         if profiler: profiler.start('GRU')
-        h = self.film(h_msm, datetimerep)
-        h = h.transpose(0,1).contiguous() # (T, B, D)
-        h,_ = self.temporal_block(h, lens) # (B, T, D)
+        h_modulated = self.film(h_msm, datetimerep)
+        gru_input = torch.cat([h_modulated, len_feats], dim=-1) # (B, T, D + 2)
+        gru_input = gru_input.transpose(0,1).contiguous() # (T, B, D)
+        h,_ = self.temporal_block(gru_input, lens) # (B, T, D)
         h = h.transpose(0,1).contiguous()
         if profiler: profiler.stop()
         
