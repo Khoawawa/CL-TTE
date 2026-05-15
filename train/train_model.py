@@ -79,12 +79,11 @@ def train_model(model:         nn.Module,
                     features    = to_var(features,   args.device)
                     truth_data  = to_var(truth_data,  args.device)
             
-                    truth_data_norm = args.scaler.transform(truth_data)
                     
                     with torch.set_grad_enabled(phase == 'train'):
                         with torch.amp.autocast(args.device):
                             output, loss_cl = model(features, truth_data)
-                            loss_eta        = loss_func(truth=truth_data_norm, predict=output)
+                            loss_eta        = loss_func(truth=truth_data, predict=output)
  
                             if phase == 'train' and loss_cl is not None:
                                 loss = loss_balancer(loss_eta, loss_cl, args.beta)
@@ -127,7 +126,6 @@ def train_model(model:         nn.Module,
                 gc.collect()
  
                 predictions = torch.cat(predictions).numpy()
-                predictions = args.scaler.inverse_transform(predictions)
                 targets     = torch.cat(targets).numpy()
                 scores      = calculate_metrics(
                     predictions.reshape(predictions.shape[0], -1),
