@@ -45,7 +45,7 @@ class LossBalancer:
     Keeps l_cl at the same magnitude as l_eta by computing a smoothed
     scale = ema(l_eta) / ema(l_cl) and clamping it to a safe range.
     """
-    def __init__(self, ema_decay=0.9, clamp=(0.05, 2.0)):
+    def __init__(self, ema_decay=0.9, clamp=(1.0, 50.0)):
         self.ema_decay = ema_decay
         self.clamp     = clamp
         self.ema_eta   = None
