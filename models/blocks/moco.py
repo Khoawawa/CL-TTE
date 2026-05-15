@@ -188,7 +188,12 @@ class Projector(nn.Module):
     def reset_parameter(self):
         def _weights_init(m):
             if isinstance(m, nn.Linear):
-                # smaller gain — don't amplify variance
-                torch.nn.init.xavier_normal_(m.weight, gain=1.0)
+                torch.nn.init.xavier_normal_(m.weight, gain=1.414)
+                if m.bias is not None:
+                    torch.nn.init.zeros_(m.bias)
+            # We must explicitly initialize the new BatchNorm layer
+            elif isinstance(m, nn.BatchNorm1d):
+                torch.nn.init.ones_(m.weight)
+                torch.nn.init.zeros_(m.bias)
+        
         self.mlp.apply(_weights_init)
-
