@@ -21,9 +21,14 @@ class ContrastiveEncoder(nn.Module):
     
     def calculate_contrastive_loss(self, z_orig, z_aug, y_true):
         B = z_orig.size(0)
-        
+        print(f"z_orig norm: {z_orig.norm(dim=-1).mean():.4f} std: {z_orig.norm(dim=-1).std():.4f}")
+        print(f"z_aug  norm: {z_aug.norm(dim=-1).mean():.4f} std: {z_aug.norm(dim=-1).std():.4f}")
+
         z_orig = F.normalize(z_orig, dim=-1)
         z_aug = F.normalize(z_aug, dim=-1)
+        
+        print(f"sim diag mean: {torch.diag(sim).mean():.4f}")   # positive pair similarity
+        print(f"sim offdiag mean: {(sim - torch.diag(sim).diag()).mean():.4f}")  # negative similarity
         
         sim = torch.matmul(z_orig, z_aug.T) / self.contrastive_temperature
         
