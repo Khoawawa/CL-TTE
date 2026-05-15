@@ -30,21 +30,27 @@ class ContrastiveEncoder(nn.Module):
         log_probs = F.log_softmax(sim, dim=-1)
         
         l_pos = -torch.diag(log_probs)
+        if y_true is None:
+            # hard negative contrastive loss (InfoNCE)
+            labels = torch.arange(B, device=z_orig.device)
+            loss = F.cross_entropy(sim, labels)
+            return torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))
         
+        # soft negative contrastive loss
         y_true = y_true.squeeze(-1).detach().float()
-        
         with torch.amp.autocast(device_type='cuda', enabled=False):
             time_diff = torch.abs(y_true.unsqueeze(1) - y_true.unsqueeze(0))
             soft_weights = 2 * torch.sigmoid(-self.tau_I * time_diff)
         # print(soft_weights.mean())
         mask = ~torch.eye(B, dtype=torch.bool, device=z_orig.device)
+        soft_weights = soft_weights * mask.float() 
         
-        l_neg = -(soft_weights * log_probs * mask).sum(dim=1) / (B - 1 + 1e-6)
+        weight_sum = soft_weights.sum(dim=1).clamp(min=1e-6)
+        l_neg = -(soft_weights * log_probs).sum(dim=1) / weight_sum.unsqueeze(1)
         
         loss = (l_pos + l_neg).mean()
-        loss = torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))
         
-        return loss
+        return torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))
         
     def masked_mean_pool(self, x, padding_mask=None):
         """
