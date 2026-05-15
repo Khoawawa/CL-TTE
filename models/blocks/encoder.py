@@ -24,35 +24,42 @@ class ContrastiveEncoder(nn.Module):
         
         z_orig = F.normalize(z_orig, dim=-1)
         z_aug = F.normalize(z_aug, dim=-1)
+        
         print(f"z_orig norm: {z_orig.norm(dim=-1).mean():.4f} std: {z_orig.norm(dim=-1).std():.4f}")
         print(f"z_aug  norm: {z_aug.norm(dim=-1).mean():.4f} std: {z_aug.norm(dim=-1).std():.4f}")
-
-        sim = torch.matmul(z_orig, z_aug.T) / self.contrastive_temperature
-        
-        print(f"sim diag mean: {torch.diag(sim).mean():.4f}")   # positive pair similarity
-        print(f"sim offdiag mean: {(sim - torch.diag(sim).diag()).mean():.4f}")  # negative similarity
-        
-        log_probs = F.log_softmax(sim, dim=-1)
-        
-        l_pos = -torch.diag(log_probs)
-        if y_true is None:
-            # hard negative contrastive loss (InfoNCE)
-            labels = torch.arange(B, device=z_orig.device)
-            loss = F.cross_entropy(sim, labels)
-            return torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))
-        
-        # soft negative contrastive loss
-        y_true = y_true.squeeze(-1).detach().float()
         with torch.amp.autocast(device_type='cuda', enabled=False):
+            z_orig = z_orig.float()
+            z_aug = z_aug.float()
+            
+            
+            sim = torch.matmul(z_orig, z_aug.T) / self.contrastive_temperature
+        
+            print(f"sim diag mean: {torch.diag(sim).mean():.4f}")   # positive pair similarity
+            print(f"sim offdiag mean: {(sim - torch.diag(sim).diag()).mean():.4f}")  # negative similarity
+            
+            sim = sim.clamp(-100, 100)  # prevent extreme values for numerical stability
+            
+            log_probs = F.log_softmax(sim, dim=-1)
+            l_pos = -torch.diag(log_probs)
+            
+            if y_true is None:
+                # hard negative contrastive loss (InfoNCE)
+                labels = torch.arange(B, device=z_orig.device)
+                loss = F.cross_entropy(sim, labels)
+                return torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))
+        
+            # soft negative contrastive loss
+            y_true = y_true.squeeze(-1).detach().float()
+        
             time_diff = torch.abs(y_true.unsqueeze(1) - y_true.unsqueeze(0))
             soft_weights = 2 * torch.sigmoid(-self.tau_I * time_diff)
-        # print(soft_weights.mean())
-        mask = ~torch.eye(B, dtype=torch.bool, device=z_orig.device)
-        soft_weights = soft_weights * mask.float() 
+            # print(soft_weights.mean())
+            mask = ~torch.eye(B, dtype=torch.bool, device=z_orig.device)
+            soft_weights = soft_weights * mask.float() 
         
-        weight_sum = soft_weights.sum(dim=1).clamp(min=1e-6)
-        l_neg = -(soft_weights * log_probs).sum(dim=1) / weight_sum.unsqueeze(1)
-        
+            weight_sum = soft_weights.sum(dim=1).clamp(min=1e-6)
+            l_neg = -(soft_weights * log_probs).sum(dim=1) / weight_sum.unsqueeze(1)
+            
         loss = (l_pos + l_neg).mean()
         
         return torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))
