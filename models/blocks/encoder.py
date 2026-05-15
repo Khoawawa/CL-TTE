@@ -27,10 +27,10 @@ class ContrastiveEncoder(nn.Module):
         z_orig = F.normalize(z_orig, dim=-1)
         z_aug = F.normalize(z_aug, dim=-1)
         
+        sim = torch.matmul(z_orig, z_aug.T) / self.contrastive_temperature
+        
         print(f"sim diag mean: {torch.diag(sim).mean():.4f}")   # positive pair similarity
         print(f"sim offdiag mean: {(sim - torch.diag(sim).diag()).mean():.4f}")  # negative similarity
-        
-        sim = torch.matmul(z_orig, z_aug.T) / self.contrastive_temperature
         
         log_probs = F.log_softmax(sim, dim=-1)
         
