@@ -178,8 +178,7 @@ class Projector(nn.Module):
             nn.Linear(nin, nin, bias=False),
             nn.BatchNorm1d(nin),
             nn.ReLU(),
-            nn.Linear(nin, nout, bias=False),
-            nn.BatchNorm1d(nout, affine=False)
+            nn.Linear(nin, nout),
         )
         self.reset_parameter()
 
