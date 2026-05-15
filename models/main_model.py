@@ -39,8 +39,7 @@ class Cl_TTE(nn.Module):
         self.regression_mlp = nn.Sequential(
             nn.Linear(mlp_in_dim, mlp_in_dim//2),
             nn.LeakyReLU(),
-            nn.Linear(mlp_in_dim//2, 1),
-            nn.Softplus()
+            nn.Linear(mlp_in_dim//2, 1)
         )
         
     def forward(self, inputs: torch.Tensor, y_true: torch.Tensor,profiler: BlockTimer=None):
