@@ -74,12 +74,12 @@ class ContrastiveEncoder(nn.Module):
 
             loss = loss[valid_rows].mean()
 
-        # with torch.no_grad():
-        #     raw_sim = torch.matmul(z, z.T)
+        with torch.no_grad():
+            raw_sim = torch.matmul(z, z.T)
 
-            # print(f"diag sim: {torch.diag(raw_sim).mean():.4f}")
-            # print(f"offdiag sim: {raw_sim[logits_mask].mean():.4f}")
-            # print(f"positive pairs: {pos_mask.sum().item()}")
+            print(f"diag sim: {torch.diag(raw_sim).mean():.4f}")
+            print(f"offdiag sim: {raw_sim[logits_mask].mean():.4f}")
+            print(f"positive pairs: {pos_mask.sum().item()}")
 
         return loss
         
