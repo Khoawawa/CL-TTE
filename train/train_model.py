@@ -63,7 +63,7 @@ def train_model(model:          Cl_TTE,
         f.write("\n\n")
 
     print(f"Starting LR: {optimizer.param_groups[0]['lr']:.2e}")
-
+    model.use_contrastive = True
     try:
         for epoch in range(start_epoch, args.epochs):
             running_loss = {phase: 0.0 for phase in phases}
@@ -81,10 +81,10 @@ def train_model(model:          Cl_TTE,
                     truth_data  = to_var(truth_data,  args.device)
 
                     # Dynamic Warmup Shift for Contrastive Task
-                    if (phase == 'train' and not model.use_contrastive and (global_step >= warmup_steps // 2)):
-                        model.use_contrastive = True
-                        loss_balancer.reset()
-                        print(f"\n Step {global_step}: Warmup completed. Enabling contrastive learning.\n")
+                    # if (phase == 'train' and not model.use_contrastive and (global_step >= warmup_steps // 2)):
+                    #     model.use_contrastive = True
+                    #     loss_balancer.reset()
+                    #     print(f"\n Step {global_step}: Warmup completed. Enabling contrastive learning.\n")
                         
                     with torch.set_grad_enabled(phase == 'train'):
                         with torch.amp.autocast(device_type='cuda' if 'cuda' in str(args.device) else 'cpu', enabled=True):
