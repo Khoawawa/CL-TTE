@@ -62,7 +62,8 @@ class ContrastiveEncoder(nn.Module):
             y_true = y_true.squeeze(-1).detach().float()
         
             time_diff = torch.abs(y_true.unsqueeze(1) - y_true.unsqueeze(0))
-            soft_weights = 2 * torch.sigmoid(-self.tau_I * time_diff)
+            
+            soft_weights = 1.0 - torch.exp(-self.tau_I * time_diff)
             
             soft_weights = soft_weights * mask.float() 
         
@@ -70,6 +71,8 @@ class ContrastiveEncoder(nn.Module):
             
             # FIX 3: Remove the unsqueeze to prevent [B, B] broadcasting explosion!
             l_neg = -(soft_weights * log_probs).sum(dim=1) / weight_sum
+            print(f"soft_weights mean: {soft_weights.mean().item():.4f}")
+            print(f"soft_weights nonzero: {(soft_weights > 0.01).float().sum().item():.1f}")
             
         loss = (l_pos + l_neg).mean()
         print(f"Contrastive Loss: {loss.item():.4f} (pos: {l_pos.mean().item():.4f}, neg: {l_neg.mean().item():.4f})")
