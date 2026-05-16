@@ -109,7 +109,8 @@ class ContrastiveEncoder(nn.Module):
         
         if self.training and use_contrastive:
             h_msm_aug = self.transformer(x_with_cls, src_key_padding_mask=pad_mask, use_heavy_dropout=True)
-            
+            print(f"h_clean vs h_aug cosine: {F.cosine_similarity(h_msm_full.mean(1), h_msm_aug.mean(1)).mean():.4f}")
+
             h_cls_orig = h_msm_full[:, 0, :]
             h_cls_aug = h_msm_aug[:, 0, :]
             
