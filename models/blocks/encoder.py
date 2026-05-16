@@ -23,61 +23,71 @@ class ContrastiveEncoder(nn.Module):
         self.transformer = MSM(d_model,nhead,dropout1,dropout2,nlayer)
         self.projector = Projector(d_model, d_model)
         
-        self.cls_token = nn.Parameter(torch.empty(1, 1, d_model))
-        nn.init.xavier_uniform_(self.cls_token)
     
-    def calculate_contrastive_loss(self, z_orig, z_aug, y_true):
-        B = z_orig.size(0)
+    def calculate_contrastive_loss(self, z, y_true):
+        B = z.size(0)
+
+        z = F.normalize(z, dim=-1)
+
+        sim = torch.matmul(z, z.T)
+        sim = sim / self.contrastive_temperature
+
+        logits_mask = ~torch.eye(B, dtype=torch.bool, device=z.device)
+
+        y = y_true.squeeze(-1).float()
+        t1 = y.unsqueeze(1)
+        t2 = y.unsqueeze(0)
         
-        z_orig = F.normalize(z_orig, dim=-1)
-        z_aug = F.normalize(z_aug, dim=-1)
+        rel_diff = torch.abs(t1 - t2) / (torch.max(t1, t2) + 1e-6)
+
+        # thresholds
+        pos_percentile = 0.1
+        neg_percentile = 0.2
         
-        # FIX 1: Measure actual feature spread, not norm spread
-        print(f"z_orig std: {z_orig.std(dim=0).mean():.4f}")
-        print(f"z_aug  std: {z_aug.std(dim=0).mean():.4f}")
+        pos_mask = (rel_diff <= pos_percentile) & logits_mask
+        neg_mask = (rel_diff >= neg_percentile) & logits_mask
         
-        with torch.amp.autocast(device_type='cuda', enabled=False):
-            z_orig = z_orig.float()
-            z_aug = z_aug.float()
-            
-            sim = torch.matmul(z_orig, z_aug.T) 
+        pos_weights = torch.exp(
+            -rel_diff / max(pos_percentile, 1e-6)
+        ) * pos_mask.float()
+        neg_weights = (
+            1.0 - torch.exp(
+                -rel_diff / max(neg_percentile, 1e-6)
+            )
+        ) * neg_mask.float()
         
-            # FIX 2: Safely extract off-diagonal mean without zero-bias
-            mask = ~torch.eye(B, dtype=torch.bool, device=z_orig.device)
-            print(f"sim diag mean: {torch.diag(sim).mean():.4f}")   
-            print(f"sim offdiag mean: {sim[mask].mean():.4f}") 
-            
-            sim = sim / self.contrastive_temperature
-            sim = sim.clamp(-100, 100)  
-            
-            log_probs = F.log_softmax(sim, dim=-1)
-            l_pos = -torch.diag(log_probs)
-            
-            if y_true is None:
-                labels = torch.arange(B, device=z_orig.device)
-                loss = F.cross_entropy(sim, labels)
-                return torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))
+        sim = sim.masked_fill(~logits_mask, -1e-9)
+        log_probs = F.log_softmax(sim, dim=1)
+        # attract
+        pos_den = pos_weights.sum(dim=1).clamp(min=1e-6)
+        l_pos = -(
+            pos_weights * log_probs
+        ).sum(dim=1) / pos_den
+        # repel
+        probs = torch.exp(log_probs)
+        neg_den = neg_weights.sum(dim=1).clamp(min=1e-6)
         
-            # Soft negative contrastive loss
-            y_true = y_true.squeeze(-1).detach().float()
+        l_neg = (
+            neg_weights * probs
+        ).sum(dim=1) / neg_den
         
-            time_diff = torch.abs(y_true.unsqueeze(1) - y_true.unsqueeze(0))
-            
-            soft_weights = 1.0 - torch.exp(-self.tau_I * time_diff)
-            
-            soft_weights = soft_weights * mask.float() 
-        
-            weight_sum = soft_weights.sum(dim=1).clamp(min=1e-6)
-            
-            # FIX 3: Remove the unsqueeze to prevent [B, B] broadcasting explosion!
-            l_neg = -(soft_weights * log_probs).sum(dim=1) / weight_sum
-            print(f"soft_weights mean: {soft_weights.mean().item():.4f}")
-            print(f"soft_weights nonzero: {(soft_weights > 0.01).float().sum().item():.1f}")
-            
         loss = (l_pos + l_neg).mean()
-        print(f"Contrastive Loss: {loss.item():.4f} (pos: {l_pos.mean().item():.4f}, neg: {l_neg.mean().item():.4f})")
         
-        return torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))
+        print(f"sim diag mean: {torch.diag(sim).mean():.4f}")
+        print(f"sim offdiag mean: {sim[logits_mask].mean():.4f}")
+
+        print(f"positive pairs: {pos_mask.float().sum().item():.1f}")
+        print(f"negative pairs: {neg_mask.float().sum().item():.1f}")
+
+        print(f"l_pos: {l_pos.mean().item():.4f}")
+        print(f"l_neg: {l_neg.mean().item():.4f}")
+        print(f"loss : {loss.item():.4f}")
+        
+        return torch.where(
+            torch.isfinite(loss),
+            loss,
+            torch.zeros_like(loss)
+        )   
         
     def masked_mean_pool(self, x, padding_mask=None):
         """
@@ -101,41 +111,27 @@ class ContrastiveEncoder(nn.Module):
         # x: (B, T, D)
         
         B, T, D = x.shape
-        cls_tokens = self.cls_token.expand(B, -1, -1)
         
         if src_key_padding_mask is None:
-            pad_mask = torch.ones(B, T + 1, dtype=torch.bool, device=x.device)
+            pad_mask = torch.zeros(B, T, dtype=torch.bool, device=x.device)
         else:
-            cls_mask = torch.zeros(B, 1, dtype=torch.bool, device=x.device)
-            pad_mask = torch.cat([cls_mask, src_key_padding_mask], dim=1)
+            pad_mask = src_key_padding_mask
             
         x_clean = self.input_proj(x)
-        x_clean_with_cls = torch.cat([cls_tokens, x_clean], dim=1)
         
                 
-        h_msm_full = self.transformer(x_clean_with_cls, src_key_padding_mask=pad_mask, use_heavy_dropout=False)
+        h_msm_full = self.transformer(x_clean, src_key_padding_mask=pad_mask, use_heavy_dropout=False)
         loss_cl = None
         
         if self.training and use_contrastive:
             
-            x_aug = F.dropout(x, p=0.15, training=True)
-            x_aug = self.input_proj(x_aug)
-            x_aug_with_cls = torch.cat([cls_tokens, x_aug], dim=1)
-            h_msm_aug = self.transformer(x_aug_with_cls, src_key_padding_mask=pad_mask, use_heavy_dropout=True)
-            
-            print(f"h_clean vs h_aug cosine: {F.cosine_similarity(h_msm_full.mean(1), h_msm_aug.mean(1)).mean():.4f}")
-
-            h_cls_orig = h_msm_full[:, 0, :]
-            h_cls_aug = h_msm_aug[:, 0, :]
-            
+            h_cls_orig = self.masked_mean_pool(h_msm_full, padding_mask=pad_mask)               
             z_clean = self.projector(h_cls_orig)
-            z_aug = self.projector(h_cls_aug)
             
-            loss_cl = self.calculate_contrastive_loss(z_clean, z_aug, y)
+            loss_cl = self.calculate_contrastive_loss(z_clean, y)
         
-        h_msm_seq = h_msm_full[:, 1:, :]
         
-        return h_msm_seq, loss_cl
+        return h_msm_full, loss_cl
     
     
 class SegmentEncoder(nn.Module):
