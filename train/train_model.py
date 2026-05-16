@@ -113,12 +113,14 @@ def train_model(model:          Cl_TTE,
                     # TQDM live logging updates
                     cl_val = loss_cl.item() if loss_cl is not None else None
                     if cl_val is not None and cl_metric is not None:
+                        scale = loss_balancer.get_scale()
                         desc = f"L1: {loss_eta.item():.4f}  CL: {cl_val:.4f}"
                         for k,v in cl_metric.items():
                             if isinstance(v, float):
                                 desc += f" {k}: {v:.4f}"
                             else:
                                 desc += f" {k}: {v}"
+                        desc += f" scale: {scale:.4f}"
                     else:
                         desc = f"L1: {loss_eta.item():.4f}"
 
