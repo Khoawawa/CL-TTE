@@ -76,12 +76,13 @@ class ContrastiveEncoder(nn.Module):
 
         with torch.no_grad():
             raw_sim = torch.matmul(z, z.T)
+            metric = {
+                'diag': torch.diag(raw_sim).mean().item(),
+                'offdiag': raw_sim[logits_mask].mean().item(),
+                'pos': pos_mask.sum().item()
+            }
 
-            print(f"diag sim: {torch.diag(raw_sim).mean():.4f}")
-            print(f"offdiag sim: {raw_sim[logits_mask].mean():.4f}")
-            print(f"positive pairs: {pos_mask.sum().item()}")
-
-        return loss
+        return loss, metric
         
     def masked_mean_pool(self, x, padding_mask=None):
         """
@@ -116,16 +117,16 @@ class ContrastiveEncoder(nn.Module):
                 
         h_msm_full = self.transformer(x_clean, src_key_padding_mask=pad_mask, use_heavy_dropout=False)
         loss_cl = None
-        
+        metric = None
         if self.training and use_contrastive:
             
             h_cls_orig = self.masked_mean_pool(h_msm_full, padding_mask=pad_mask)               
             z_clean = self.projector(h_cls_orig)
             
-            loss_cl = self.calculate_contrastive_loss(z_clean, y)
+            loss_cl, metric = self.calculate_contrastive_loss(z_clean, y)
         
         
-        return h_msm_full, loss_cl
+        return h_msm_full, loss_cl, metric
     
     
 class SegmentEncoder(nn.Module):

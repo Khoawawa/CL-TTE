@@ -88,7 +88,7 @@ def train_model(model:          Cl_TTE,
                         
                     with torch.set_grad_enabled(phase == 'train'):
                         with torch.amp.autocast(device_type='cuda' if 'cuda' in str(args.device) else 'cpu', enabled=True):
-                            output, loss_cl = model(features, truth_data)
+                            output, loss_cl, cl_metric = model(features, truth_data)
                             loss_eta        = loss_func(truth=truth_data, predict=output)
 
                             # Explicit variable tracking to clean out validation leaks
@@ -112,8 +112,13 @@ def train_model(model:          Cl_TTE,
 
                     # TQDM live logging updates
                     cl_val = loss_cl.item() if loss_cl is not None else None
-                    if cl_val is not None:
+                    if cl_val is not None and cl_metric is not None:
                         desc = f"L1: {loss_eta.item():.4f}  CL: {cl_val:.4f}"
+                        for k,v in cl_metric.items():
+                            if isinstance(v, float):
+                                desc += f" {k}: {v:.4f}"
+                            else:
+                                desc += f" {k}: {v}"
                     else:
                         desc = f"L1: {loss_eta.item():.4f}"
 

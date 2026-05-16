@@ -72,7 +72,7 @@ class Cl_TTE(nn.Module):
             y_true = y_true.squeeze(-1)
         
         if profiler: profiler.start('contrast')
-        h_msm, loss_cl = self.contrast_enc(
+        h_msm, loss_cl, metric = self.contrast_enc(
             semantic_feats,
             src_key_padding_mask=padding_mask,
             y=y_true,
@@ -99,6 +99,6 @@ class Cl_TTE(nn.Module):
         z_time = torch.concat([z, datetimerep], dim=-1) # (B,D + 33)
         t = self.regression_mlp(z_time) # (B, 1)
         
-        return t, loss_cl
+        return t, loss_cl, metric
     
     
