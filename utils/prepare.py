@@ -363,7 +363,61 @@ class BatchSampler:
 
     def __len__(self):
         return (self.count + self.batch_size - 1) // self.batch_size
+class VarianceBucketSampler:
+    def __init__(self, dataset, batch_size, pool_factor=10):
+        self.count = len(dataset)
+        self.batch_size = batch_size
+        self.pool_factor = pool_factor # Controls the Padding vs. Variance trade-off
+        
+        if isinstance(dataset[0], dict):
+            self.lengths = [len(d['lats']) for d in dataset]
+        elif isinstance(dataset[0][1], list):
+            self.lengths = [len(d[1]) for d in dataset]
+        else:
+            self.lengths = [d[0]['lens'] for d in dataset]
+            
+        self.indices = list(range(self.count))
 
+    def __iter__(self):
+        # 1. Global shuffle first
+        np.random.shuffle(self.indices)
+
+        # 2. Divide into massive chunks (same as before)
+        chunk_size = self.batch_size * 100
+        chunks = (self.count + chunk_size - 1) // chunk_size
+
+        for i in range(chunks):
+            start = i * chunk_size
+            end = min((i + 1) * chunk_size, self.count)
+            chunk_idx = self.indices[start:end]
+            
+            # 3. Sort the mega-chunk by length (This bounds our max padding)
+            chunk_idx.sort(key=lambda x: self.lengths[x], reverse=True)
+            
+            # 4. THE FIX: Sub-pool shuffling
+            # Group into pools of e.g. 10 batches. 
+            # Shuffle INSIDE the pool before yielding to guarantee variance.
+            pool_size = self.batch_size * self.pool_factor
+            
+            for p in range(0, len(chunk_idx), pool_size):
+                pool_start = p
+                pool_end = min(p + pool_size, len(chunk_idx))
+                
+                # Extract pool, shuffle it, and put it back
+                pool = chunk_idx[pool_start:pool_end]
+                np.random.shuffle(pool) 
+                chunk_idx[pool_start:pool_end] = pool
+                
+            self.indices[start:end] = chunk_idx
+
+        # 5. Yield the finalized batches
+        batches = (self.count + self.batch_size - 1) // self.batch_size
+        for i in range(batches):
+            yield self.indices[i * self.batch_size: min((i + 1) * self.batch_size, self.count)]
+
+    def __len__(self):
+        return (self.count + self.batch_size - 1) // self.batch_size
+    
 def load_datadoct_pre(args):
     global info_all
     
@@ -450,7 +504,7 @@ def load_datadict(args):
             loader[phase] = DataLoader(
                 Datadict(data[phase]), 
                 batch_size=args.batch_size, 
-                shuffle=True,  # This guarantees ETA variance in every batch
+                batch_sampler=VarianceBucketSampler(data[phase], args.batch_size, pool_factor=10),
                 collate_fn=lambda x: collate_func(x, args, info_all),
                 pin_memory=True,
                 num_workers=2
