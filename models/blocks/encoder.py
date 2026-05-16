@@ -115,7 +115,7 @@ class ContrastiveEncoder(nn.Module):
         
         if self.training and use_contrastive:
             
-            x_aug = F.dropout(x_clean, p=0.15, training=True)
+            x_aug = F.dropout(x, p=0.15, training=True)
             x_aug = self.input_proj(x_aug)
             x_aug_with_cls = torch.cat([cls_tokens, x_aug], dim=1)
             h_msm_aug = self.transformer(x_aug_with_cls, src_key_padding_mask=pad_mask, use_heavy_dropout=False)
