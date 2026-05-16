@@ -29,8 +29,8 @@ class ContrastiveEncoder(nn.Module):
         z_aug = F.normalize(z_aug, dim=-1)
         
         # FIX 1: Measure actual feature spread, not norm spread
-        # print(f"z_orig std: {z_orig.std(dim=0).mean():.4f}")
-        # print(f"z_aug  std: {z_aug.std(dim=0).mean():.4f}")
+        print(f"z_orig std: {z_orig.std(dim=0).mean():.4f}")
+        print(f"z_aug  std: {z_aug.std(dim=0).mean():.4f}")
         
         with torch.amp.autocast(device_type='cuda', enabled=False):
             z_orig = z_orig.float()
@@ -40,8 +40,8 @@ class ContrastiveEncoder(nn.Module):
         
             # FIX 2: Safely extract off-diagonal mean without zero-bias
             mask = ~torch.eye(B, dtype=torch.bool, device=z_orig.device)
-            # print(f"sim diag mean: {torch.diag(sim).mean():.4f}")   
-            # print(f"sim offdiag mean: {sim[mask].mean():.4f}") 
+            print(f"sim diag mean: {torch.diag(sim).mean():.4f}")   
+            print(f"sim offdiag mean: {sim[mask].mean():.4f}") 
             
             sim = sim / self.contrastive_temperature
             sim = sim.clamp(-100, 100)  
@@ -68,7 +68,7 @@ class ContrastiveEncoder(nn.Module):
             l_neg = -(soft_weights * log_probs).sum(dim=1) / weight_sum
             
         loss = (l_pos + l_neg).mean()
-        # print(f"Contrastive Loss: {loss.item():.4f} (pos: {l_pos.mean().item():.4f}, neg: {l_neg.mean().item():.4f})")
+        print(f"Contrastive Loss: {loss.item():.4f} (pos: {l_pos.mean().item():.4f}, neg: {l_neg.mean().item():.4f})")
         
         return torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))
         
