@@ -447,9 +447,14 @@ def load_datadict(args):
         data[phase] = tdata
 
         if phase == 'train':
-            loader[phase] = DataLoader(Datadict(data[phase]),# batch_sampler=BatchSampler(data[phase], args.batch_size),
-                                        collate_fn=lambda x: collate_func(x, args, info_all),
-                                        pin_memory=True,num_workers=2)
+            loader[phase] = DataLoader(
+                Datadict(data[phase]), 
+                batch_size=args.batch_size, 
+                shuffle=True,  # This guarantees ETA variance in every batch
+                collate_fn=lambda x: collate_func(x, args, info_all),
+                pin_memory=True,
+                num_workers=2
+            )
         else:
             
             loader[phase] = DataLoader(Datadict(data[phase]), batch_size=args.batch_size,
