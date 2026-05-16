@@ -503,7 +503,6 @@ def load_datadict(args):
         if phase == 'train':
             loader[phase] = DataLoader(
                 Datadict(data[phase]), 
-                batch_size=args.batch_size, 
                 batch_sampler=VarianceBucketSampler(data[phase], args.batch_size, pool_factor=5),
                 collate_fn=lambda x: collate_func(x, args, info_all),
                 pin_memory=True,
