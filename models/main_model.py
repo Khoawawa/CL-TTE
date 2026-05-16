@@ -18,16 +18,17 @@ class Cl_TTE(nn.Module):
         
         # SEGMENT ENCODER
         self.enc = SegmentEncoder(d_model=d_model, n_poi_groups=n_poi_groups, nlayers=seq_layer)
-        
-        # CONTRASTIVE BLOCK
-        self.contrast_enc = ContrastiveEncoder(in_dim=self.enc.feature_dim, d_model=d_model, nlayer=seq_layer, nhead=nhead, contrastive_temperature=contrastive_temperature, tau_I=tau_I)
-        
         # film modulator
         self.film = GlobalFiLM(
             time_dim=self.enc.datetime_dim,
-            embed_dim=d_model,
+            embed_dim=self.enc.feature_dim,
             n_layers=seq_layer
         )
+        self.post_film_proj = nn.Linear(self.enc.feature_dim, d_model)
+        # CONTRASTIVE BLOCK
+        self.contrast_enc = ContrastiveEncoder(in_dim=d_model, d_model=d_model, nlayer=seq_layer, nhead=nhead, contrastive_temperature=contrastive_temperature, tau_I=tau_I)
+        
+        
         # self.pre_gru_proj = nn.Linear(d_model + 2, d_model)
         self.temporal_block = LayerNormGRU(input_dim=d_model + 2, hidden_dim=d_model, num_layers=seq_layer)
         
@@ -63,11 +64,13 @@ class Cl_TTE(nn.Module):
         if profiler: profiler.start('enc')
         semantic_feats, len_feats, datetimerep = self.enc(links,dateinfo, profiler)  # (B, T, D), (B, T, 2), (B, datetime_dim)
         if profiler: profiler.stop()
-        
+        # FILM MODULATION
+        semantic_feats = self.film(semantic_feats, datetimerep)
+        semantic_feats = self.post_film_proj(semantic_feats)
         # CONTRASTIVE LEARNING
         if y_true.dim() == 2:
             y_true = y_true.squeeze(-1)
-            
+        
         if profiler: profiler.start('contrast')
         h_msm, loss_cl = self.contrast_enc(
             semantic_feats,
@@ -78,10 +81,8 @@ class Cl_TTE(nn.Module):
         if profiler: profiler.stop()
         
         # TEMPORAL ENCODING
-        if profiler: profiler.start('GRU')
-        h_modulated = self.film(h_msm, datetimerep)
-        
-        gru_input = torch.cat([h_modulated, len_feats], dim=-1) # (B, T, D + 2)
+        if profiler: profiler.start('GRU')        
+        gru_input = torch.cat([h_msm, len_feats], dim=-1) # (B, T, D + 2)
         gru_input = gru_input.transpose(0,1).contiguous() # (T, B, D)
         h,_ = self.temporal_block(gru_input, lens) # (B, T, D)
         h = h.transpose(0,1).contiguous()
