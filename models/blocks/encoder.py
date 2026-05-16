@@ -27,67 +27,61 @@ class ContrastiveEncoder(nn.Module):
     def calculate_contrastive_loss(self, z, y_true):
         B = z.size(0)
 
-        z = F.normalize(z, dim=-1)
+        z = F.normalize(z.float(), dim=-1)
 
-        sim = torch.matmul(z, z.T)
-        sim = sim / self.contrastive_temperature
+        with torch.amp.autocast(device_type='cuda', enabled=False):
 
-        logits_mask = ~torch.eye(B, dtype=torch.bool, device=z.device)
+            sim = torch.matmul(z, z.T)
+            sim = sim / self.contrastive_temperature
 
-        y = y_true.squeeze(-1).float()
-        t1 = y.unsqueeze(1)
-        t2 = y.unsqueeze(0)
-        
-        rel_diff = torch.abs(t1 - t2) / (torch.max(t1, t2) + 1e-6)
+            logits_mask = ~torch.eye(B, dtype=torch.bool, device=z.device)
 
-        # thresholds
-        pos_percentile = 0.1
-        neg_percentile = 0.2
-        
-        pos_mask = (rel_diff <= pos_percentile) & logits_mask
-        neg_mask = (rel_diff >= neg_percentile) & logits_mask
-        
-        pos_weights = torch.exp(
-            -rel_diff / max(pos_percentile, 1e-6)
-        ) * pos_mask.float()
-        neg_weights = (
-            1.0 - torch.exp(
-                -rel_diff / max(neg_percentile, 1e-6)
+            y = y_true.squeeze(-1).float()
+
+            t1 = y.unsqueeze(1)
+            t2 = y.unsqueeze(0)
+
+            rel_diff = torch.abs(t1 - t2) / (
+                torch.max(t1, t2) + 1e-6
             )
-        ) * neg_mask.float()
-        
-        sim = sim.masked_fill(~logits_mask, -1e-9)
-        log_probs = F.log_softmax(sim, dim=1)
-        # attract
-        pos_den = pos_weights.sum(dim=1).clamp(min=1e-6)
-        l_pos = -(
-            pos_weights * log_probs
-        ).sum(dim=1) / pos_den
-        # repel
-        probs = torch.exp(log_probs)
-        neg_den = neg_weights.sum(dim=1).clamp(min=1e-6)
-        
-        l_neg = (
-            neg_weights * probs
-        ).sum(dim=1) / neg_den
-        
-        loss = (l_pos + l_neg).mean()
-        
-        print(f"sim diag mean: {torch.diag(sim).mean():.4f}")
-        print(f"sim offdiag mean: {sim[logits_mask].mean():.4f}")
 
-        print(f"positive pairs: {pos_mask.float().sum().item():.1f}")
-        print(f"negative pairs: {neg_mask.float().sum().item():.1f}")
+            pos_threshold = 0.03
 
-        print(f"l_pos: {l_pos.mean().item():.4f}")
-        print(f"l_neg: {l_neg.mean().item():.4f}")
-        print(f"loss : {loss.item():.4f}")
-        
-        return torch.where(
-            torch.isfinite(loss),
-            loss,
-            torch.zeros_like(loss)
-        )   
+            pos_mask = (
+                (rel_diff <= pos_threshold)
+                & logits_mask
+            )
+
+            sim = sim - sim.max(
+                dim=1,
+                keepdim=True
+            )[0].detach()
+
+            exp_sim = torch.exp(sim) * logits_mask.float()
+
+            denom = exp_sim.sum(dim=1, keepdim=True)
+
+            log_prob = sim - torch.log(denom + 1e-8)
+
+            pos_count = pos_mask.sum(dim=1)
+
+            valid_rows = pos_count > 0
+
+            loss = -(
+                (pos_mask.float() * log_prob).sum(dim=1)
+                / pos_count.clamp(min=1)
+            )
+
+            loss = loss[valid_rows].mean()
+
+        with torch.no_grad():
+            raw_sim = torch.matmul(z, z.T)
+
+            print(f"diag sim: {torch.diag(raw_sim).mean():.4f}")
+            print(f"offdiag sim: {raw_sim[logits_mask].mean():.4f}")
+            print(f"positive pairs: {pos_mask.sum().item()}")
+
+        return loss
         
     def masked_mean_pool(self, x, padding_mask=None):
         """
