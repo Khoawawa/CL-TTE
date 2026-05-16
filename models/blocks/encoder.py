@@ -12,10 +12,14 @@ from models.blocks.moco import MoCo, Projector
 from models.profiler.profiler import BlockTimer
 
 class ContrastiveEncoder(nn.Module):
-    def __init__(self, d_model, nhead, tau_I, dropout1=0.1, dropout2=0.3, nlayer=4, contrastive_temperature=0.25):
+    def __init__(self, in_dim, d_model, nhead, tau_I, dropout1=0.1, dropout2=0.3, nlayer=4, contrastive_temperature=0.25):
         super().__init__()
         self.tau_I = tau_I
         self.contrastive_temperature = contrastive_temperature
+        
+        
+        self.input_proj = nn.Linear(in_dim, d_model)
+        
         self.transformer = MSM(d_model,nhead,dropout1,dropout2,nlayer)
         self.projector = Projector(d_model, d_model)
         
@@ -94,21 +98,28 @@ class ContrastiveEncoder(nn.Module):
         # x: (B, T, D)
         
         B, T, D = x.shape
-        
         cls_tokens = self.cls_token.expand(B, -1, -1)
-        x_with_cls = torch.cat([cls_tokens, x], dim=1)
         
         if src_key_padding_mask is None:
             pad_mask = torch.ones(B, T + 1, dtype=torch.bool, device=x.device)
         else:
             cls_mask = torch.zeros(B, 1, dtype=torch.bool, device=x.device)
             pad_mask = torch.cat([cls_mask, src_key_padding_mask], dim=1)
+            
+        x_clean = self.input_proj(x)
+        x_clean_with_cls = torch.cat([cls_tokens, x_clean], dim=1)
         
-        h_msm_full = self.transformer(x_with_cls, src_key_padding_mask=pad_mask, use_heavy_dropout=False)
+                
+        h_msm_full = self.transformer(x_clean_with_cls, src_key_padding_mask=pad_mask, use_heavy_dropout=False)
         loss_cl = None
         
         if self.training and use_contrastive:
-            h_msm_aug = self.transformer(x_with_cls, src_key_padding_mask=pad_mask, use_heavy_dropout=True)
+            
+            x_aug = F.dropout(x_clean, p=0.15, training=True)
+            x_aug = self.input_proj(x_aug)
+            x_aug_with_cls = torch.cat([cls_tokens, x_aug], dim=1)
+            h_msm_aug = self.transformer(x_aug_with_cls, src_key_padding_mask=pad_mask, use_heavy_dropout=False)
+            
             print(f"h_clean vs h_aug cosine: {F.cosine_similarity(h_msm_full.mean(1), h_msm_aug.mean(1)).mean():.4f}")
 
             h_cls_orig = h_msm_full[:, 0, :]
@@ -156,12 +167,12 @@ class SegmentEncoder(nn.Module):
         
         
         modulate_dim = 2 * highway_dim + poi_dim + speed_dim + lanes_dim
-        feature_dim = modulate_dim
+        self.feature_dim = modulate_dim
         
         
-        self.represent = nn.Sequential(
-            nn.Linear(feature_dim, d_model)
-        )
+        # self.represent = nn.Sequential(
+        #     nn.Linear(feature_dim, d_model)
+        # )
         
     def forward(self, links, dateinfo, profiler: BlockTimer=None): 
         # links: (B, T, D_in) [HighwayID1, HighwayID2, Len, CumLen, Lat1, Lon1, Lat2, Lon2, poi*n, speed, lanes]
@@ -193,6 +204,6 @@ class SegmentEncoder(nn.Module):
             ],
             dim=-1
         )
-        semantic_feats = self.represent(semantic_feats) # (B, T, d_model)
+        # semantic_feats = self.represent(semantic_feats) # (B, T, d_model)
         return semantic_feats, len_feats, datetimerep # (B, T, d_model), (B, T, 2), (B, datetime_dim)
     

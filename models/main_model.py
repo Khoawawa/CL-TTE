@@ -13,14 +13,14 @@ class Cl_TTE(nn.Module):
         
         self.d_model = d_model
         self.dropout1 = 0.1
-        self.dropout2 = 0.3
+        self.dropout2 = 0.1
         self.use_contrastive = use_contrastive
         
         # SEGMENT ENCODER
         self.enc = SegmentEncoder(d_model=d_model, n_poi_groups=n_poi_groups, nlayers=seq_layer)
         
         # CONTRASTIVE BLOCK
-        self.contrast_enc = ContrastiveEncoder(d_model=d_model,nlayer=seq_layer,nhead=nhead,contrastive_temperature=contrastive_temperature, tau_I=tau_I)
+        self.contrast_enc = ContrastiveEncoder(in_dim=self.enc.feature_dim, d_model=d_model, nlayer=seq_layer, nhead=nhead, contrastive_temperature=contrastive_temperature, tau_I=tau_I)
         
         # film modulator
         self.film = GlobalFiLM(
