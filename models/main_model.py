@@ -28,7 +28,7 @@ class Cl_TTE(nn.Module):
             embed_dim=d_model,
             n_layers=seq_layer
         )
-    
+        # self.pre_gru_proj = nn.Linear(d_model + 2, d_model)
         self.temporal_block = LayerNormGRU(input_dim=d_model + 2, hidden_dim=d_model, num_layers=seq_layer)
         
         # ATTENTION POOLING
@@ -80,6 +80,7 @@ class Cl_TTE(nn.Module):
         # TEMPORAL ENCODING
         if profiler: profiler.start('GRU')
         h_modulated = self.film(h_msm, datetimerep)
+        
         gru_input = torch.cat([h_modulated, len_feats], dim=-1) # (B, T, D + 2)
         gru_input = gru_input.transpose(0,1).contiguous() # (T, B, D)
         h,_ = self.temporal_block(gru_input, lens) # (B, T, D)
