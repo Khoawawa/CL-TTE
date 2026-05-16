@@ -170,30 +170,28 @@ class MoCo(nn.Module):
         l_neg = -(soft_weights * log_probs[:, 1:]).sum(dim=1) / self.queue_size
         
         return (l_pos + alpha * l_neg).mean()
-
 class Projector(nn.Module):
-    def __init__(self, nin, nout):
+    def __init__(self, nin, nout=128):
         super().__init__()
+
+        hidden = nin // 2
+
         self.mlp = nn.Sequential(
-            nn.Linear(nin, nin, bias=False),
-            nn.BatchNorm1d(nin),
-            nn.ReLU(),
-            nn.Linear(nin, nout),
+            nn.Linear(nin, hidden),
+            nn.GELU(),
+
+            nn.Linear(hidden, nout)
         )
+
         self.reset_parameter()
 
     def forward(self, x):
         return self.mlp(x)
 
     def reset_parameter(self):
-        def _weights_init(m):
+        for m in self.modules():
             if isinstance(m, nn.Linear):
-                torch.nn.init.xavier_normal_(m.weight, gain=1.414)
+                nn.init.xavier_uniform_(m.weight)
+
                 if m.bias is not None:
-                    torch.nn.init.zeros_(m.bias)
-            # We must explicitly initialize the new BatchNorm layer
-            elif isinstance(m, nn.BatchNorm1d):
-                torch.nn.init.ones_(m.weight)
-                torch.nn.init.zeros_(m.bias)
-        
-        self.mlp.apply(_weights_init)
+                    nn.init.zeros_(m.bias)
