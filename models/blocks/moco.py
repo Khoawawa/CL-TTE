@@ -177,10 +177,13 @@ class Projector(nn.Module):
         hidden = nin // 2
 
         self.mlp = nn.Sequential(
-            nn.Linear(nin, hidden),
+            # Bias is redundant before BatchNorm, so we set bias=False
+            nn.Linear(nin, hidden, bias=False), 
+            nn.BatchNorm1d(hidden),
             nn.GELU(),
-
-            nn.Linear(hidden, nout)
+            # Many contrastive setups (like SimCLR) also place a BN layer at the end
+            nn.Linear(hidden, nout, bias=False),
+            nn.BatchNorm1d(nout) 
         )
 
         self.reset_parameter()
@@ -192,6 +195,7 @@ class Projector(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight)
-
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
+            # BatchNorm layers have their own default initialization (gamma=1, beta=0)
+            # which is optimal here, so we don't need to override them.
