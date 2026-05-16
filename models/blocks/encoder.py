@@ -118,7 +118,7 @@ class ContrastiveEncoder(nn.Module):
             x_aug = F.dropout(x, p=0.15, training=True)
             x_aug = self.input_proj(x_aug)
             x_aug_with_cls = torch.cat([cls_tokens, x_aug], dim=1)
-            h_msm_aug = self.transformer(x_aug_with_cls, src_key_padding_mask=pad_mask, use_heavy_dropout=False)
+            h_msm_aug = self.transformer(x_aug_with_cls, src_key_padding_mask=pad_mask, use_heavy_dropout=True)
             
             print(f"h_clean vs h_aug cosine: {F.cosine_similarity(h_msm_full.mean(1), h_msm_aug.mean(1)).mean():.4f}")
 
