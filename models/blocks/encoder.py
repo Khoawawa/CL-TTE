@@ -43,14 +43,13 @@ class ContrastiveEncoder(nn.Module):
 
             # Three zones
             pos_mask = (rel_diff <= 0.03) & logits_mask        # pull together
-            neg_mask = (rel_diff > 0.10) & logits_mask         # push apart
-            # ignore zone: 0.03 < rel_diff <= 0.10 — ambiguous, don't touch
+            neg_mask = (rel_diff > 0.15) & logits_mask         # push apart
+            # ignore zone: 0.03 < rel_diff <= 0.15 — ambiguous, don't touch
 
             sim = sim - sim.max(dim=1, keepdim=True)[0].detach()
 
-            # Only true negatives in denominator
-            exp_sim = torch.exp(sim) * neg_mask.float()
-            denom = exp_sim.sum(dim=1, keepdim=True)
+            exp_sim_all = torch.exp(sim) * (pos_mask | neg_mask).float() 
+            denom = exp_sim_all.sum(dim=1, keepdim=True)
             log_prob = sim - torch.log(denom.clamp(min=1e-8))
 
             pos_count = pos_mask.sum(dim=1)
