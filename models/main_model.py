@@ -79,7 +79,7 @@ class Cl_TTE(nn.Module):
             use_contrastive=self.use_contrastive
         )
         if profiler: profiler.stop()
-        h_msm = h_msm.detach()
+        h_msm =  h_msm * 0.1 + h_msm.detach() * 0.9
         # TEMPORAL ENCODING
         if profiler: profiler.start('GRU')        
         gru_input = torch.cat([h_msm, len_feats], dim=-1) # (B, T, D + 2)
