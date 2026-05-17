@@ -45,7 +45,7 @@ class ContrastiveEncoder(nn.Module):
                 torch.max(t1, t2) + 1e-6
             )
 
-            pos_threshold = 0.001
+            pos_threshold = 0.03
 
             pos_mask = (
                 (rel_diff <= pos_threshold)
