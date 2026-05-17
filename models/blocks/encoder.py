@@ -76,9 +76,14 @@ class ContrastiveEncoder(nn.Module):
 
         with torch.no_grad():
             raw_sim = torch.matmul(z, z.T)
+            offdiag_sims = raw_sim[logits_mask]  # flatten all offdiag values
+            
             metric = {
                 'diag': torch.diag(raw_sim).mean().item(),
-                'offdiag': raw_sim[logits_mask].mean().item(),
+                'offdiag_mean': offdiag_sims.mean().item(),
+                'offdiag_std': offdiag_sims.std().item(),   # ← key diagnostic
+                'offdiag_min': offdiag_sims.min().item(),   # ← spread
+                'offdiag_max': offdiag_sims.max().item(),   # ← spread
                 'pos': pos_mask.sum().item()
             }
 
