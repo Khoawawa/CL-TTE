@@ -23,7 +23,6 @@ class ContrastiveEncoder(nn.Module):
         self.transformer = MSM(d_model,nhead,dropout1,dropout2,nlayer)
         self.projector = Projector(d_model, d_model)
         
-    
     def calculate_contrastive_loss(self, z, y_true):
         B = z.size(0)
 
@@ -37,58 +36,49 @@ class ContrastiveEncoder(nn.Module):
             logits_mask = ~torch.eye(B, dtype=torch.bool, device=z.device)
 
             y = y_true.squeeze(-1).float()
-
             t1 = y.unsqueeze(1)
             t2 = y.unsqueeze(0)
 
-            rel_diff = torch.abs(t1 - t2) / (
-                torch.max(t1, t2) + 1e-6
-            )
+            rel_diff = torch.abs(t1 - t2) / (torch.max(t1, t2) + 1e-6)
 
-            pos_threshold = 0.03
+            # Three zones
+            pos_mask = (rel_diff <= 0.03) & logits_mask        # pull together
+            neg_mask = (rel_diff > 0.10) & logits_mask         # push apart
+            # ignore zone: 0.03 < rel_diff <= 0.10 — ambiguous, don't touch
 
-            pos_mask = (
-                (rel_diff <= pos_threshold)
-                & logits_mask
-            )
+            sim = sim - sim.max(dim=1, keepdim=True)[0].detach()
 
-            sim = sim - sim.max(
-                dim=1,
-                keepdim=True
-            )[0].detach()
-
-            exp_sim = torch.exp(sim) * logits_mask.float()
-
+            # Only true negatives in denominator
+            exp_sim = torch.exp(sim) * neg_mask.float()
             denom = exp_sim.sum(dim=1, keepdim=True)
-
-            log_prob = sim - torch.log(denom + 1e-8)
+            log_prob = sim - torch.log(denom.clamp(min=1e-8))
 
             pos_count = pos_mask.sum(dim=1)
-
             valid_rows = pos_count > 0
 
             loss = -(
                 (pos_mask.float() * log_prob).sum(dim=1)
                 / pos_count.clamp(min=1)
             )
-
             loss = loss[valid_rows].mean()
 
         with torch.no_grad():
             raw_sim = torch.matmul(z, z.T)
-            offdiag_sims = raw_sim[logits_mask]  # flatten all offdiag values
-            
+            offdiag_sims = raw_sim[logits_mask]
+
             metric = {
                 'diag': torch.diag(raw_sim).mean().item(),
                 'offdiag_mean': offdiag_sims.mean().item(),
-                'offdiag_std': offdiag_sims.std().item(),   # ← key diagnostic
-                'offdiag_min': offdiag_sims.min().item(),   # ← spread
-                'offdiag_max': offdiag_sims.max().item(),   # ← spread
-                'pos': pos_mask.sum().item()
+                'offdiag_std': offdiag_sims.std().item(),
+                'offdiag_min': offdiag_sims.min().item(),
+                'offdiag_max': offdiag_sims.max().item(),
+                'pos': pos_mask.sum().item(),
+                'neg': neg_mask.sum().item(),           # ← new
+                'valid_rows': valid_rows.sum().item(),  # ← new
             }
 
         return loss, metric
-        
+
     def masked_mean_pool(self, x, padding_mask=None):
         """
         x : (B, T, D)

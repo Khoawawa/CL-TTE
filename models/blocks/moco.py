@@ -174,7 +174,7 @@ class Projector(nn.Module):
     def __init__(self, nin, nout=128):
         super().__init__()
 
-        hidden = nin // 2
+        hidden = nin 
 
         self.mlp = nn.Sequential(
             # Bias is redundant before BatchNorm, so we set bias=False
