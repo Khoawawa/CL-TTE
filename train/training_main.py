@@ -81,12 +81,12 @@ def train_main(args):
         if args.optim == "Adam":
             return optim.Adam([
                 {'params': other_params,       'lr': args.lr},          # 1e-3
-                {'params': contrastive_params, 'lr': args.lr * 0.5},    # 5e-4
+                {'params': contrastive_params, 'lr': args.lr},    # 5e-4
             ])
         elif args.optim == "AdamW":
             return optim.AdamW([
                 {'params': other_params,       'lr': args.lr,       'weight_decay': args.weight_decay, 'betas': (0.9, 0.95)},
-                {'params': contrastive_params, 'lr': args.lr * 0.5, 'weight_decay': args.weight_decay, 'betas': (0.9, 0.95)},
+                {'params': contrastive_params, 'lr': args.lr, 'weight_decay': args.weight_decay, 'betas': (0.9, 0.95)},
             ])
         raise NotImplementedError(f"Unknown optimizer: {args.optim}")
  
