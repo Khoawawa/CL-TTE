@@ -89,7 +89,9 @@ class LossBalancer:
     def get_scale(self):
         if self.ema_cl is None or self.ema_cl < 1e-6:
             return 1.0
-        return self.ema_eta / self.ema_cl
+        scale = self.ema_eta / (self.ema_cl + 1e-6)
+        scale = max(self.clamp[0], min(self.clamp[1], scale))
+        return scale
  
 # ---------------------------------------------------------------------------
 # Scheduler factory
