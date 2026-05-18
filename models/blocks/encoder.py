@@ -47,9 +47,12 @@ class ContrastiveEncoder(nn.Module):
             # ignore zone: 0.03 < rel_diff <= 0.15 — ambiguous, don't touch
 
             sim = sim - sim.max(dim=1, keepdim=True)[0].detach()
+            
+            alpha_neg = 0.1  # start here
 
-            exp_sim_all = torch.exp(sim) * (pos_mask | neg_mask).float() 
-            denom = exp_sim_all.sum(dim=1, keepdim=True)
+            exp_sim_pos = torch.exp(sim) * pos_mask.float()
+            exp_sim_neg = torch.exp(sim) * neg_mask.float() * alpha_neg
+            denom = (exp_sim_pos + exp_sim_neg).sum(dim=1, keepdim=True)
             log_prob = sim - torch.log(denom.clamp(min=1e-8))
 
             pos_count = pos_mask.sum(dim=1)
