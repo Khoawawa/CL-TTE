@@ -158,7 +158,7 @@ class SegmentEncoder(nn.Module):
         )
         
         
-        modulate_dim = 2 * highway_dim + poi_dim + speed_dim + lanes_dim
+        modulate_dim = 2 * highway_dim + poi_dim + speed_dim + lanes_dim + 1
         self.feature_dim = modulate_dim
         
         
@@ -185,10 +185,11 @@ class SegmentEncoder(nn.Module):
         # gpsrep = torch.tanh(self.gpsembed(links[:, :, 4:8].float())) # 16
         
         poirep = self.poi_embed(links[:, :, 6:6+self.n_poi_groups]) # (B, T, poi_dim)
-        len_feats = links[:, :, 2:4] # (B, T, 2)
+        culm_len = links[:, :, 3] # (B, T, 1)
 
         semantic_feats = torch.cat(
             [
+                links[:,:,2],
                 highwayrep,
                 poirep,
                 speedrep,
@@ -197,5 +198,5 @@ class SegmentEncoder(nn.Module):
             dim=-1
         )
         # semantic_feats = self.represent(semantic_feats) # (B, T, d_model)
-        return semantic_feats, len_feats, datetimerep # (B, T, d_model), (B, T, 2), (B, datetime_dim)
+        return semantic_feats, culm_len, datetimerep # (B, T, d_model), (B, T, 2), (B, datetime_dim)
     

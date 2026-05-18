@@ -30,8 +30,14 @@ class Cl_TTE(nn.Module):
         
         
         # self.pre_gru_proj = nn.Linear(d_model + 2, d_model)
-        self.temporal_block = LayerNormGRU(input_dim=d_model + 2, hidden_dim=d_model, num_layers=seq_layer)
-        
+        self.temporal_block = LayerNormGRU(input_dim=d_model + 1, hidden_dim=d_model, num_layers=seq_layer)
+        self.alpha_gate = nn.Sequential(
+            nn.Linear(d_model, d_model//2),
+            nn.LeakyReLU(),
+            nn.Linear(d_model//2, 1),
+            nn.Sigmoid()
+        )
+        self.alpha_gate[-2].bias.data.fill_(-1.0)
         # ATTENTION POOLING
         self.pool_query = nn.Parameter(torch.randn(1,1,d_model))
         self.attn = nn.MultiheadAttention(d_model, nhead, dropout=0.1, batch_first=True)
@@ -79,13 +85,20 @@ class Cl_TTE(nn.Module):
             use_contrastive=self.use_contrastive
         )
         if profiler: profiler.stop()
-        h_msm =  h_msm * 0.1 + h_msm.detach() * 0.9
         # TEMPORAL ENCODING
         if profiler: profiler.start('GRU')        
         gru_input = torch.cat([h_msm, len_feats], dim=-1) # (B, T, D + 2)
         gru_input = gru_input.transpose(0,1).contiguous() # (T, B, D)
         h,_ = self.temporal_block(gru_input, lens) # (B, T, D)
         h = h.transpose(0,1).contiguous()
+        if profiler: profiler.stop()
+        
+        # ALPHA GATE
+        if profiler: profiler.start('alpha gate')
+        trip_repr = self.contrast_enc.masked_mean_pool(h_msm, padding_mask=padding_mask) # (B, D)
+        alpha = self.alpha_gate(trip_repr).unsqueeze(1) # (B, 1, 1)
+        h = alpha * h_msm + (1-alpha) * h
+        metric['alpha'] = alpha.mean().item()
         if profiler: profiler.stop()
         
         # ATTENTION POOLING
