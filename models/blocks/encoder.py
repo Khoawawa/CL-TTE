@@ -76,6 +76,7 @@ class ContrastiveEncoder(nn.Module):
                 'offdiag_max': offdiag_sims.max().item(),
                 'pos': pos_mask.sum().item(),
                 'neg': neg_mask.sum().item(),           # ← new
+                'dampened_neg': (neg_mask.sum() * alpha_neg).item(),
                 'valid_rows': valid_rows.sum().item(),  # ← new
             }
 
