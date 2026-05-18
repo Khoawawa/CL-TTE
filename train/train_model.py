@@ -63,7 +63,7 @@ def train_model(model:          Cl_TTE,
         f.write("\n\n")
 
     print(f"Starting LR: {optimizer.param_groups[0]['lr']:.2e}")
-    model.use_contrastive = True
+    model.use_contrastive = False
     try:
         for epoch in range(start_epoch, args.epochs):
             running_loss = {phase: 0.0 for phase in phases}
