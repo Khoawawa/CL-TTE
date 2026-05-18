@@ -127,7 +127,7 @@ def train_model(model:          Cl_TTE,
                     tqdm_loader.set_description(
                         f"{phase} epoch {epoch} | "
                         f"loss: {running_loss[phase] / max(steps, 1):.6f} | "
-                        f"lr: {optimizer.param_groups[0]['lr']:.2e} | {desc}"
+                        f"lr: {optimizer.param_groups[0]['lr']:.2e} | cl_lr: {optimizer.param_groups[1]['lr']:.2e} | {desc}"
                     )
 
                     # Optimized performance tracking: Append tensors on GPU directly

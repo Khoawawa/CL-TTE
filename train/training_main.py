@@ -74,15 +74,20 @@ def train_main(args):
     print(f"data config:  {args.data_config}")
  
     def make_optimizer():
+        contrastive_params = list(model.contrast_enc.parameters())
+        contrastive_ids = set(id(p) for p in contrastive_params)
+        other_params = [p for p in model.parameters() if id(p) not in contrastive_ids]
+        
         if args.optim == "Adam":
-            return optim.Adam(model.parameters(), lr=args.lr)
+            return optim.Adam([
+                {'params': other_params,       'lr': args.lr},          # 1e-3
+                {'params': contrastive_params, 'lr': args.lr * 0.5},    # 5e-4
+            ])
         elif args.optim == "AdamW":
-            return optim.AdamW(
-                model.parameters(),
-                lr=args.lr,
-                weight_decay=args.weight_decay,
-                betas=(0.9, 0.95),
-            )
+            return optim.AdamW([
+                {'params': other_params,       'lr': args.lr,       'weight_decay': args.weight_decay, 'betas': (0.9, 0.95)},
+                {'params': contrastive_params, 'lr': args.lr * 0.5, 'weight_decay': args.weight_decay, 'betas': (0.9, 0.95)},
+            ])
         raise NotImplementedError(f"Unknown optimizer: {args.optim}")
  
     # ------------------------------------------------------------------ train
