@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from models.main_model import Cl_TTE
 from utils.metric import calculate_metrics
-from utils.util import save_model, to_var, get_warmup_cosine_scheduler, LossBalancer
+from utils.util import save_model, to_var, get_warmup_cosine_scheduler_with_floor, LossBalancer
 
 
 def set_requires_grad(module, flag: bool):
@@ -39,7 +39,7 @@ def train_model(model:          Cl_TTE,
         steps_per_epoch = len(data_loaders['train'])
         total_steps     = steps_per_epoch * getattr(args, 'max_epochs', 20)
         warmup_steps    = max(1, int(0.05 * total_steps))
-        scheduler       = get_warmup_cosine_scheduler(optimizer, warmup_steps, total_steps)
+        scheduler       = get_warmup_cosine_scheduler_with_floor(optimizer, warmup_steps, total_steps)
         print(f"Scheduler: warmup {warmup_steps} steps, total {total_steps} steps")
 
     if loss_balancer is None:
