@@ -67,18 +67,24 @@ class ContrastiveEncoder(nn.Module):
             numerator = (
                 exp_sim * target_sim
             ).sum(dim=1)
-            
+
+            numerator = numerator.clamp(min=1e-8)
+
             denominator = (
                 exp_sim * logits_mask.float()
-            ).sum(dim=1).clamp(min=1e-8)
+            ).sum(dim=1)
+
+            denominator = denominator.clamp(min=1e-8)
+
+            ratio = numerator / denominator
+
+            ratio = ratio.clamp(min=1e-8)
+
+            loss = -torch.log(ratio)
             
             pos_weight_sum = target_sim.sum(dim=1)
 
             valid_rows = pos_weight_sum > 1e-6
-            
-            loss = -torch.log(
-                numerator / denominator
-            )
 
             loss = loss[valid_rows].mean()
             
