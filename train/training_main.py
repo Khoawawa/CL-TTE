@@ -12,7 +12,7 @@ from utils.prepare import create_model, create_loss
 from utils.prepare import load_datadict, load_datadoct_pre
 from utils.prepare import load_test_datadict
 from utils.metric import calculate_metrics
-from utils.util import to_var, LossBalancer, get_warmup_cosine_scheduler, save_model, load_checkpoint
+from utils.util import to_var, LossBalancer, get_warmup_cosine_scheduler_with_floor, save_model, load_checkpoint
 import time
 
 def test_model(model, data_loader, args):
@@ -114,7 +114,7 @@ def train_main(args):
  
         # build a temporary scheduler so load_checkpoint can restore its state
         # total_steps will be corrected from the checkpoint
-        tmp_scheduler = get_warmup_cosine_scheduler(optimizer, 1, 1)
+        tmp_scheduler = get_warmup_cosine_scheduler_with_floor(optimizer, 1, 1)
  
         start_epoch, global_step, best_mae, total_steps, warmup_steps = load_checkpoint(
             ckpt_path, model, optimizer, tmp_scheduler, loss_balancer, args.device
@@ -123,14 +123,14 @@ def train_main(args):
         # rebuild scheduler with the saved total_steps so the LR curve
         # is identical to the original training run
         if total_steps is not None and warmup_steps is not None:
-            scheduler = get_warmup_cosine_scheduler(optimizer, warmup_steps, total_steps)
+            scheduler = get_warmup_cosine_scheduler_with_floor(optimizer, warmup_steps, total_steps)
             scheduler.load_state_dict(tmp_scheduler.state_dict())
         else:
             # fallback: recompute from current dataset size and remaining epochs
             steps_per_epoch = len(data_loaders['train'])
             total_steps     = steps_per_epoch * args.epochs
             warmup_steps    = max(1, int(0.05 * total_steps))
-            scheduler       = get_warmup_cosine_scheduler(optimizer, warmup_steps, total_steps)
+            scheduler       = get_warmup_cosine_scheduler_with_floor(optimizer, warmup_steps, total_steps)
             print("Warning: total_steps not found in checkpoint, recomputed from args.")
  
         print(f"Resumed from epoch {start_epoch}, step {global_step}, best MAE {best_mae:.4f}")
