@@ -93,7 +93,7 @@ def train_model(model:          Cl_TTE,
 
                             # Explicit variable tracking to clean out validation leaks
                             if phase == 'train' and loss_cl is not None:
-                                loss = loss_balancer(loss_eta, loss_cl, args.beta)
+                                loss = loss_eta + loss_cl
                             else:
                                 loss = loss_eta
                                 loss_cl = None
