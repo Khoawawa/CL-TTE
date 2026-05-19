@@ -86,7 +86,7 @@ class ContrastiveEncoder(nn.Module):
             loss_var = self.variance_loss(z_raw.float())
             loss_cov = self.covariance_loss(z_raw.float())
 
-            total_loss = loss + 0.1 * loss_var + 0.01 * loss_cov
+            total_loss = loss + 1.0 * loss_var + 0.05 * loss_cov
 
         with torch.no_grad():
 
@@ -95,7 +95,7 @@ class ContrastiveEncoder(nn.Module):
             offdiag = raw_sim[logits_mask]
 
             metric = {
-                'diag': torch.diag(raw_sim).mean().item(),
+                'embed_std': z_raw.std(dim=0).mean().item(),
                 'offdiag_mean': offdiag.mean().item(),
                 'offdiag_std': offdiag.std().item(),
                 'offdiag_min': offdiag.min().item(),
