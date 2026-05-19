@@ -76,17 +76,13 @@ class Cl_TTE(nn.Module):
         # CONTRASTIVE LEARNING
         if y_true.dim() == 2:
             y_true = y_true.squeeze(-1)
-        
-        if profiler: profiler.start('contrast')
-        h_msm, loss_cl, metric = self.contrast_enc(
+            
+        h_msm, _, loss_cl, metric = self.contrast_enc(
             semantic_feats,
             src_key_padding_mask=padding_mask,
             y=y_true,
             use_contrastive=self.use_contrastive
         )
-        if profiler: profiler.stop()
-        # TEMPORAL ENCODING
-        h_msm = h_msm.detach() # stop gradient to contrastive block
         if profiler: profiler.start('GRU')        
         gru_input = torch.cat([h_msm, len_feats], dim=-1) # (B, T, D + 2)
         gru_input = gru_input.transpose(0,1).contiguous() # (T, B, D)

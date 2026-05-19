@@ -21,7 +21,7 @@ class ContrastiveEncoder(nn.Module):
         self.input_proj = nn.Linear(in_dim, d_model)
         
         self.transformer = MSM(d_model,nhead,dropout1,dropout2,nlayer)
-        self.projector = Projector(d_model, d_model)
+        # self.projector = Projector(d_model, d_model)
         
     def calculate_contrastive_loss(self, z, y_true):
         B = z.size(0)
@@ -36,51 +36,73 @@ class ContrastiveEncoder(nn.Module):
             logits_mask = ~torch.eye(B, dtype=torch.bool, device=z.device)
 
             y = y_true.squeeze(-1).float()
+            
             t1 = y.unsqueeze(1)
             t2 = y.unsqueeze(0)
 
             rel_diff = torch.abs(t1 - t2) / (torch.max(t1, t2) + 1e-6)
 
-            # Three zones
-            pos_mask = (rel_diff <= 0.03) & logits_mask        # pull together
-            neg_mask = (rel_diff > 0.15) & logits_mask         # push apart
-            # ignore zone: 0.03 < rel_diff <= 0.15 — ambiguous, don't touch
+            target_sim = torch.exp(
+                -rel_diff / self.tau_I
+            )
 
-            sim = sim - sim.max(dim=1, keepdim=True)[0].detach()
+            target_sim = target_sim * logits_mask.float()
             
-            alpha_neg = (pos_mask.sum() * 5 / neg_mask.sum().clamp(min=1)).item()
+            neg_mask = (
+                (rel_diff > 0.15) &
+                (rel_diff < 0.5) &
+                logits_mask
+            )
 
-            exp_sim_pos = torch.exp(sim) * pos_mask.float()
-            exp_sim_neg = torch.exp(sim) * neg_mask.float() * alpha_neg
-            denom = (exp_sim_pos + exp_sim_neg).sum(dim=1, keepdim=True)
-            log_prob = sim - torch.log(denom.clamp(min=1e-8))
+            sim = sim - sim.max(
+                dim=1,
+                keepdim=True
+            )[0].detach()
 
-            pos_count = pos_mask.sum(dim=1)
-            valid_rows = pos_count > 0
+            exp_sim = torch.exp(sim)
+
+            pos_term = exp_sim * target_sim
+            neg_term = exp_sim * neg_mask.float()
+
+            denom = (
+                pos_term.sum(dim=1, keepdim=True) +
+                neg_term.sum(dim=1, keepdim=True)
+            ).clamp(min=1e-6)
+
+            log_prob = sim - torch.log(denom)
+
+            pos_weight_sum = target_sim.sum(dim=1)
+
+            valid_rows = pos_weight_sum > 1e-6
 
             loss = -(
-                (pos_mask.float() * log_prob).sum(dim=1)
-                / pos_count.clamp(min=1)
+                (target_sim * log_prob).sum(dim=1)
+                / pos_weight_sum.clamp(min=1e-6)
             )
+
             loss = loss[valid_rows].mean()
+            
+            loss_var = self.variance_loss(z)
+
+            total_loss = loss + 0.1 * loss_var
 
         with torch.no_grad():
+
             raw_sim = torch.matmul(z, z.T)
-            offdiag_sims = raw_sim[logits_mask]
+
+            offdiag = raw_sim[logits_mask]
 
             metric = {
                 'diag': torch.diag(raw_sim).mean().item(),
-                'offdiag_mean': offdiag_sims.mean().item(),
-                'offdiag_std': offdiag_sims.std().item(),
-                'offdiag_min': offdiag_sims.min().item(),
-                'offdiag_max': offdiag_sims.max().item(),
-                'pos': pos_mask.sum().item(),
-                'neg': neg_mask.sum().item(),           # ← new
-                'dampened_neg': (neg_mask.sum() * alpha_neg).item(),
-                'valid_rows': valid_rows.sum().item(),  # ← new
+                'offdiag_mean': offdiag.mean().item(),
+                'offdiag_std': offdiag.std().item(),
+                'offdiag_min': offdiag.min().item(),
+                'offdiag_max': offdiag.max().item(),
+                'valid_rows': valid_rows.sum().item(),
+                'loss_var': loss_var.item(),
             }
 
-        return loss, metric
+        return total_loss, metric
 
     def masked_mean_pool(self, x, padding_mask=None):
         """
@@ -100,6 +122,11 @@ class ContrastiveEncoder(nn.Module):
         counts = valid_mask.sum(dim=1).clamp(min=1e-6)
 
         return summed / counts
+    
+    def variance_loss(self, z):
+        std_z = torch.sqrt(z.var(dim=0) + 1e-4)
+        return torch.mean(F.relu(1.0 - std_z))
+    
     def forward(self,x,src_key_padding_mask=None, y=None, use_contrastive=False):
         # x: (B, T, D)
         
@@ -110,21 +137,28 @@ class ContrastiveEncoder(nn.Module):
         else:
             pad_mask = src_key_padding_mask
             
-        x_clean = self.input_proj(x)
+        x = self.input_proj(x)
         
-                
-        h_msm_full = self.transformer(x_clean, src_key_padding_mask=pad_mask, use_heavy_dropout=False)
+        h = self.transformer(
+            x,
+            src_key_padding_mask=pad_mask
+        )
+        
+        trip_repr = self.masked_mean_pool(
+            h,
+            pad_mask
+        )
         loss_cl = None
-        metric = None
-        if self.training and use_contrastive:
-            
-            h_cls_orig = self.masked_mean_pool(h_msm_full, padding_mask=pad_mask)               
-            z_clean = self.projector(h_cls_orig)
-            
-            loss_cl, metric = self.calculate_contrastive_loss(z_clean, y)
-        
-        
-        return h_msm_full, loss_cl, metric
+        metric = {}
+
+        if use_contrastive and y is not None:
+
+            loss_cl, metric = self.calculate_contrastive_loss(
+                trip_repr,
+                y
+            )
+
+        return h, trip_repr, loss_cl, metric
     
     
 class SegmentEncoder(nn.Module):
