@@ -43,7 +43,7 @@ class ContrastiveEncoder(nn.Module):
 
             # Three zones
             pos_mask = (rel_diff <= 0.03) & logits_mask        # pull together
-            neg_mask = (rel_diff > 0.15) & logits_mask         # push apart
+            neg_mask = (rel_diff > 0.25) & logits_mask         # push apart
             # ignore zone: 0.03 < rel_diff <= 0.15 — ambiguous, don't touch
 
             sim = sim - sim.max(dim=1, keepdim=True)[0].detach()
