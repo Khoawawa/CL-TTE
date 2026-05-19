@@ -50,7 +50,7 @@ class ContrastiveEncoder(nn.Module):
             
             neg_mask = (
                 (rel_diff > 0.15) &
-                (rel_diff < 0.5) &
+                (rel_diff < 0.9) &
                 logits_mask
             )
 
@@ -83,8 +83,9 @@ class ContrastiveEncoder(nn.Module):
             loss = loss[valid_rows].mean()
             
             loss_var = self.variance_loss(z)
+            loss_cov = self.covariance_loss(z)
 
-            total_loss = loss + 0.1 * loss_var
+            total_loss = loss + 0.1 * loss_var + 0.01 * loss_cov
 
         with torch.no_grad():
 
@@ -100,6 +101,7 @@ class ContrastiveEncoder(nn.Module):
                 'offdiag_max': offdiag.max().item(),
                 'valid_rows': valid_rows.sum().item(),
                 'loss_var': loss_var.item(),
+                'loss_cov': loss_cov.item(),
             }
 
         return total_loss, metric
@@ -126,6 +128,18 @@ class ContrastiveEncoder(nn.Module):
     def variance_loss(self, z):
         std_z = torch.sqrt(z.var(dim=0) + 1e-4)
         return torch.mean(F.relu(1.0 - std_z))
+    
+    def covariance_loss(self, z):
+
+        z = z - z.mean(dim=0)
+
+        N, D = z.size()
+
+        cov = (z.T @ z) / (N - 1)
+
+        off_diag = cov.flatten()[:-1].view(D - 1, D + 1)[:,1:].flatten()
+
+        return (off_diag ** 2).mean()
     
     def forward(self,x,src_key_padding_mask=None, y=None, use_contrastive=False):
         # x: (B, T, D)
