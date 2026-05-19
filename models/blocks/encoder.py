@@ -21,12 +21,13 @@ class ContrastiveEncoder(nn.Module):
         self.input_proj = nn.Linear(in_dim, d_model)
         
         self.transformer = MSM(d_model,nhead,dropout1,dropout2,nlayer)
-        # self.projector = Projector(d_model, d_model)
+        self.projector = Projector(d_model, d_model)
         
     def calculate_contrastive_loss(self, z, y_true):
         B = z.size(0)
-        z_raw = z.float()
-        z = F.normalize(z.float(), dim=-1)
+        trip_repr_raw = z.float()
+        z_proj = self.projector(trip_repr_raw)
+        z = F.normalize(z_proj.float(), dim=-1)
         
 
         with torch.amp.autocast(device_type='cuda', enabled=False):
@@ -83,8 +84,8 @@ class ContrastiveEncoder(nn.Module):
 
             loss = loss[valid_rows].mean()
             
-            loss_var = self.variance_loss(z_raw.float())
-            loss_cov = self.covariance_loss(z_raw.float())
+            loss_var = self.variance_loss(trip_repr_raw.float())
+            loss_cov = self.covariance_loss(trip_repr_raw.float())
 
             total_loss = loss + 1.0 * loss_var + 0.05 * loss_cov
 
