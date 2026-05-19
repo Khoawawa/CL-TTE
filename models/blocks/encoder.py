@@ -25,8 +25,9 @@ class ContrastiveEncoder(nn.Module):
         
     def calculate_contrastive_loss(self, z, y_true):
         B = z.size(0)
-
+        z_raw = z.float()
         z = F.normalize(z.float(), dim=-1)
+        
 
         with torch.amp.autocast(device_type='cuda', enabled=False):
 
@@ -82,8 +83,8 @@ class ContrastiveEncoder(nn.Module):
 
             loss = loss[valid_rows].mean()
             
-            loss_var = self.variance_loss(z)
-            loss_cov = self.covariance_loss(z)
+            loss_var = self.variance_loss(z_raw.float())
+            loss_cov = self.covariance_loss(z_raw.float())
 
             total_loss = loss + 0.1 * loss_var + 0.01 * loss_cov
 
