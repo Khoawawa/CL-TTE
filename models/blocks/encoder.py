@@ -189,7 +189,7 @@ class SegmentEncoder(nn.Module):
 
         semantic_feats = torch.cat(
             [
-                links[:,:,2],
+                links[:,:,2].unsqueeze(-1), # len
                 highwayrep,
                 poirep,
                 speedrep,
