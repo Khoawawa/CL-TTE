@@ -21,6 +21,13 @@
         "d_model": 128,
         "nhead": 8,
         "seq_layer": 4
+    },
+    "CL_TTE_deep_map": {
+        "d_model": 128,
+        "nhead": 4,
+        "seq_layer": 4,        
+        "contrastive_temperature": 0.2,
+        "gru_layers": 2  
     }
     
 }
