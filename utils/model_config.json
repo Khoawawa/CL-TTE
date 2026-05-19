@@ -27,7 +27,7 @@
         "d_model": 128,
         "nhead": 4,
         "seq_layer": 4,        
-        "contrastive_temperature": 0.1,
+        "contrastive_temperature": 0.35,
         "gru_layers": 2  
     }
     
