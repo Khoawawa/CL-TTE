@@ -97,19 +97,32 @@ class LossBalancer:
 # Scheduler factory
 # ---------------------------------------------------------------------------
  
-def get_warmup_cosine_scheduler(optimizer, warmup_steps: int, total_steps: int):
-    """
-    Linear warmup for `warmup_steps` steps, then cosine decay to 0.
-    Call scheduler.step() once per optimizer step (not per epoch).
-    """
-    def lr_lambda(current_step: int):
-        if current_step < warmup_steps:
-            return current_step / max(1, warmup_steps)
-        progress = (current_step - warmup_steps) / max(1, total_steps - warmup_steps)
-        return 0.5 * (1.0 + math.cos(math.pi * progress))
+# def get_warmup_cosine_scheduler(optimizer, warmup_steps: int, total_steps: int):
+#     """
+#     Linear warmup for `warmup_steps` steps, then cosine decay to 0.
+#     Call scheduler.step() once per optimizer step (not per epoch).
+#     """
+#     def lr_lambda(current_step: int):
+#         if current_step < warmup_steps:
+#             return current_step / max(1, warmup_steps)
+#         progress = (current_step - warmup_steps) / max(1, total_steps - warmup_steps)
+#         return 0.5 * (1.0 + math.cos(math.pi * progress))
  
-    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-
+#     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+def get_warmup_cosine_scheduler_with_floor(optimizer, warmup_steps, total_steps):
+    def make_lambda(min_ratio):
+        def lr_lambda(step):
+            if step < warmup_steps:
+                return step / max(1, warmup_steps)
+            progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+            cosine = 0.5 * (1 + math.cos(math.pi * progress))
+            return max(min_ratio, cosine)
+        return lr_lambda
+    
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, [
+        make_lambda(0.01),   # regression: decay to 1% of peak (near zero)
+        make_lambda(0.33),   # CL: floor at 33% of peak → 1e-4 if peak is 3e-4
+    ])
 def save_model(path: str, **kwargs):
     torch.save(kwargs, path)
  
