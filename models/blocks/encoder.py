@@ -25,8 +25,11 @@ class ContrastiveEncoder(nn.Module):
         
     def calculate_contrastive_loss(self, z, y_true):
         B = z.size(0)
+        
         trip_repr_raw = z.float()
+        
         z_proj = self.projector(trip_repr_raw)
+        
         z = F.normalize(z_proj.float(), dim=-1)
         
 
@@ -37,6 +40,14 @@ class ContrastiveEncoder(nn.Module):
 
             logits_mask = ~torch.eye(B, dtype=torch.bool, device=z.device)
 
+            sim = sim - sim.max(
+                dim=1,
+                keepdim=True
+            )[0].detach()
+
+            exp_sim = torch.exp(sim)
+            
+            
             y = y_true.squeeze(-1).float()
             
             t1 = y.unsqueeze(1)
@@ -44,42 +55,29 @@ class ContrastiveEncoder(nn.Module):
 
             rel_diff = torch.abs(t1 - t2) / (torch.max(t1, t2) + 1e-6)
 
-            target_sim = torch.exp(
-                -rel_diff / self.tau_I
-            )
-
-            target_sim = target_sim * logits_mask.float()
-            
-            neg_mask = (
-                (rel_diff > 0.15) &
-                (rel_diff < 0.9) &
+            pos_mask = (
+                (rel_diff < 0.15) &
                 logits_mask
             )
-
-            sim = sim - sim.max(
-                dim=1,
-                keepdim=True
-            )[0].detach()
-
-            exp_sim = torch.exp(sim)
-
-            pos_term = exp_sim * target_sim
-            neg_term = exp_sim * neg_mask.float()
-
-            denom = (
-                pos_term.sum(dim=1, keepdim=True) +
-                neg_term.sum(dim=1, keepdim=True)
-            ).clamp(min=1e-6)
-
-            log_prob = sim - torch.log(denom)
-
+            
+            target_sim = torch.exp(
+                -rel_diff / self.tau_I
+            ) * pos_mask.float()
+            
+            numerator = (
+                exp_sim * target_sim
+            ).sum(dim=1)
+            
+            denominator = (
+                exp_sim * logits_mask.float()
+            ).sum(dim=1).clamp(min=1e-8)
+            
             pos_weight_sum = target_sim.sum(dim=1)
 
             valid_rows = pos_weight_sum > 1e-6
-
-            loss = -(
-                (target_sim * log_prob).sum(dim=1)
-                / pos_weight_sum.clamp(min=1e-6)
+            
+            loss = -torch.log(
+                numerator / denominator
             )
 
             loss = loss[valid_rows].mean()
@@ -91,19 +89,40 @@ class ContrastiveEncoder(nn.Module):
 
         with torch.no_grad():
 
-            raw_sim = torch.matmul(z, z.T)
+            raw_sim = torch.matmul(
+                z,
+                z.T
+            )
 
             offdiag = raw_sim[logits_mask]
 
             metric = {
-                'embed_std': z_raw.std(dim=0).mean().item(),
-                'offdiag_mean': offdiag.mean().item(),
-                'offdiag_std': offdiag.std().item(),
-                'offdiag_min': offdiag.min().item(),
-                'offdiag_max': offdiag.max().item(),
-                'valid_rows': valid_rows.sum().item(),
-                'loss_var': loss_var.item(),
-                'loss_cov': loss_cov.item(),
+                'embed_std_raw':
+                    trip_repr_raw.std(dim=0).mean().item(),
+
+                'embed_std_proj':
+                    z_proj.std(dim=0).mean().item(),
+
+                'offdiag_mean':
+                    offdiag.mean().item(),
+
+                'offdiag_std':
+                    offdiag.std().item(),
+
+                'offdiag_min':
+                    offdiag.min().item(),
+
+                'offdiag_max':
+                    offdiag.max().item(),
+
+                'valid_rows':
+                    valid_rows.sum().item(),
+
+                'loss_var':
+                    loss_var.item(),
+
+                'loss_cov':
+                    loss_cov.item(),
             }
 
         return total_loss, metric
