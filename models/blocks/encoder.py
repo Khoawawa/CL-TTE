@@ -38,12 +38,17 @@ class ContrastiveEncoder(nn.Module):
             sim = torch.matmul(z, z.T)
             sim = sim / self.contrastive_temperature
 
-            logits_mask = ~torch.eye(B, dtype=torch.bool, device=z.device)
+            logits_mask = ~torch.eye(
+                B,
+                dtype=torch.bool,
+                device=z.device
+            )
 
-            sim = sim - sim.max(
-                dim=1,
-                keepdim=True
-            )[0].detach()
+            # remove self pairs
+            masked_sim = sim.masked_fill(
+                ~logits_mask,
+                -1e9
+            )
 
             exp_sim = torch.exp(sim)
             
@@ -64,25 +69,26 @@ class ContrastiveEncoder(nn.Module):
                 -rel_diff / self.tau_I
             ) * pos_mask.float()
             
-            numerator = (
-                exp_sim * target_sim
+            log_denom = torch.logsumexp(
+                masked_sim,
+                dim=1,
+                keepdim=True
+            )
+            
+            log_prob = sim - log_denom
+            
+            loss = -(
+                target_sim * log_prob
             ).sum(dim=1)
-
-            numerator = numerator.clamp(min=1e-8)
-
-            denominator = (
-                exp_sim * logits_mask.float()
-            ).sum(dim=1)
-
-            denominator = denominator.clamp(min=1e-8)
-
-            ratio = numerator / denominator
-
-            ratio = ratio.clamp(min=1e-8)
-
-            loss = -torch.log(ratio)
             
             pos_weight_sum = target_sim.sum(dim=1)
+            
+            loss = (
+                loss /
+                pos_weight_sum.clamp(min=1e-8)
+            )
+            
+            
 
             valid_rows = pos_weight_sum > 1e-6
 
