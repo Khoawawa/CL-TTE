@@ -48,7 +48,7 @@ class ContrastiveEncoder(nn.Module):
 
             sim = sim - sim.max(dim=1, keepdim=True)[0].detach()
             
-            alpha_neg = (pos_mask.sum() * 5 / neg_mask.sum().clamp(min=1)).item()
+            alpha_neg = (pos_mask.sum() * 3 / neg_mask.sum().clamp(min=1)).item()
 
             exp_sim_pos = torch.exp(sim) * pos_mask.float()
             exp_sim_neg = torch.exp(sim) * neg_mask.float() * alpha_neg
