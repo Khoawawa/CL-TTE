@@ -42,8 +42,8 @@ class ContrastiveEncoder(nn.Module):
             rel_diff = torch.abs(t1 - t2) / (torch.max(t1, t2) + 1e-6)
 
             # Three zones
-            pos_mask = (rel_diff <= 0.02) & logits_mask        # pull together
-            neg_mask = (rel_diff > 0.25) & logits_mask         # push apart
+            pos_mask = (rel_diff <= 0.03) & logits_mask        # pull together
+            neg_mask = (rel_diff > 0.15) & logits_mask         # push apart
             # ignore zone: 0.03 < rel_diff <= 0.15 — ambiguous, don't touch
 
             sim = sim - sim.max(dim=1, keepdim=True)[0].detach()
