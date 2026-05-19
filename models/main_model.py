@@ -8,7 +8,7 @@ from models.blocks.poi import GlobalFiLM
 from models.profiler.profiler import BlockTimer
     
 class Cl_TTE(nn.Module):
-    def __init__(self, d_model, nhead, seq_layer, tau_I,n_poi_groups=9,contrastive_temperature=0.25, use_contrastive=False):
+    def __init__(self, d_model, nhead, seq_layer, gru_layers, tau_I,n_poi_groups=9,contrastive_temperature=0.25, use_contrastive=False):
         super().__init__()
         
         self.d_model = d_model
@@ -30,7 +30,7 @@ class Cl_TTE(nn.Module):
         
         
         # self.pre_gru_proj = nn.Linear(d_model + 2, d_model)
-        self.temporal_block = LayerNormGRU(input_dim=d_model + 1, hidden_dim=d_model, num_layers=seq_layer)
+        self.temporal_block = LayerNormGRU(input_dim=d_model + 1, hidden_dim=d_model, num_layers=gru_layers)
         self.alpha_gate = nn.Sequential(
             nn.Linear(d_model, d_model//2),
             nn.LeakyReLU(),
