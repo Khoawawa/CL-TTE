@@ -86,6 +86,7 @@ class Cl_TTE(nn.Module):
         )
         if profiler: profiler.stop()
         # TEMPORAL ENCODING
+        h_msm = h_msm.detach() # stop gradient to contrastive block
         if profiler: profiler.start('GRU')        
         gru_input = torch.cat([h_msm, len_feats], dim=-1) # (B, T, D + 2)
         gru_input = gru_input.transpose(0,1).contiguous() # (T, B, D)
@@ -95,10 +96,10 @@ class Cl_TTE(nn.Module):
         
         # ALPHA GATE
         if profiler: profiler.start('alpha gate')
-        trip_repr = self.contrast_enc.masked_mean_pool(h_msm, padding_mask=padding_mask) # (B, D)
-        alpha = self.alpha_gate(trip_repr).unsqueeze(1) # (B, 1, 1)
-        h = alpha * h_msm + (1-alpha) * h
-        metric['alpha'] = alpha.mean().item()
+        # trip_repr = self.contrast_enc.masked_mean_pool(h_msm, padding_mask=padding_mask) # (B, D)
+        # alpha = self.alpha_gate(trip_repr).unsqueeze(1) # (B, 1, 1)
+        # h = alpha * h_msm + (1-alpha) * h
+        # metric['alpha'] = alpha.mean().item()
         if profiler: profiler.stop()
         
         # ATTENTION POOLING
