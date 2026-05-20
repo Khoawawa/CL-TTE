@@ -74,7 +74,7 @@ def train_main(args):
     print(f"data config:  {args.data_config}")
  
     def make_optimizer():
-        contrastive_params = list(model.contrast_enc.parameters())
+        contrastive_params = list(model.contrastive_module.parameters())
         contrastive_ids = set(id(p) for p in contrastive_params)
         other_params = [p for p in model.parameters() if id(p) not in contrastive_ids]
         
