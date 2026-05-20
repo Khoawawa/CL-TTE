@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.blocks.encoder import SegmentEncoder, ContrastiveEncoder
+from models.contrastive_module import ContrastiveModule
 from models.blocks.LayerNormGRU import LayerNormGRU
 from models.blocks.poi import GlobalFiLM
 
@@ -12,32 +12,20 @@ class Cl_TTE(nn.Module):
         super().__init__()
         
         self.d_model = d_model
-        self.dropout1 = 0.1
-        self.dropout2 = 0.3
-        self.use_contrastive = use_contrastive
         
-        # SEGMENT ENCODER
-        self.enc = SegmentEncoder(d_model=d_model, n_poi_groups=n_poi_groups, nlayers=seq_layer)
-        # film modulator
-        self.film = GlobalFiLM(
-            time_dim=self.enc.datetime_dim,
-            embed_dim=self.enc.feature_dim,
-            n_layers=seq_layer
+        self.contrastive_module = ContrastiveModule(
+            d_model=d_model,
+            nhead=nhead,
+            tau_I=tau_I,
+            dropout=0.1,
+            nlayer=seq_layer,
+            n_poi_groups=n_poi_groups,
+            contrastive_temperature=contrastive_temperature
         )
-        self.post_film_proj = nn.Linear(self.enc.feature_dim, d_model)
-        # CONTRASTIVE BLOCK
-        self.contrast_enc = ContrastiveEncoder(in_dim=d_model, d_model=d_model, nlayer=seq_layer, nhead=nhead, contrastive_temperature=contrastive_temperature, tau_I=tau_I)
         
         
-        # self.pre_gru_proj = nn.Linear(d_model + 2, d_model)
         self.temporal_block = LayerNormGRU(input_dim=d_model + 1, hidden_dim=d_model, num_layers=gru_layers)
-        self.alpha_gate = nn.Sequential(
-            nn.Linear(d_model, d_model//2),
-            nn.LeakyReLU(),
-            nn.Linear(d_model//2, 1),
-            nn.Sigmoid()
-        )
-        self.alpha_gate[-2].bias.data.fill_(-1.0)
+        
         # ATTENTION POOLING
         self.pool_query = nn.Parameter(torch.randn(1,1,d_model))
         self.attn = nn.MultiheadAttention(d_model, nhead, dropout=0.1, batch_first=True)
@@ -53,50 +41,29 @@ class Cl_TTE(nn.Module):
         
     def forward(self, inputs: torch.Tensor, y_true: torch.Tensor, profiler: BlockTimer=None):
         # inputs: 
-        # links: [B, T, 17] -> (highway1, highway2, len, culm_len, start_lat, start_lon, end_lat, end_lon, POI*9)
+        # links:
         # dateinfo : [B, 3]
+        # culm_len: [B, T, 1]
         # lens: [B]
-        
-        links = inputs['links_clean']
+        x = inputs['links_clean']
+        x_aug = inputs['links_aug']
         dateinfo = inputs['dateinfo']
+        culm_len = inputs['culm_len']
         lens = inputs['lens']
         
         max_len = torch.max(lens).item()
         segment_mask = torch.arange(max_len, device=lens.device).unsqueeze(0) < lens.unsqueeze(1)
         padding_mask = ~segment_mask
         
-        # ENCODING THE SEGMENTS
-        
-        if profiler: profiler.start('enc')
-        semantic_feats, len_feats, datetimerep = self.enc(links,dateinfo, profiler)  # (B, T, D), (B, T, 2), (B, datetime_dim)
-        if profiler: profiler.stop()
-        # FILM MODULATION
-        semantic_feats = self.film(semantic_feats, datetimerep)
-        semantic_feats = self.post_film_proj(semantic_feats)
-        # CONTRASTIVE LEARNING
-        if y_true.dim() == 2:
-            y_true = y_true.squeeze(-1)
-            
-        h_msm, _, loss_cl, metric = self.contrast_enc(
-            semantic_feats,
-            src_key_padding_mask=padding_mask,
-            y=y_true,
-            use_contrastive=self.use_contrastive
+        h_msm, datetimerep, loss_cl, metric = self.contrastive_module(
+            x, x_aug, dateinfo, culm_len, 
+            src_key_padding_mask=padding_mask, 
+            src_key_augment_padding_mask=padding_mask
         )
-        if profiler: profiler.start('GRU')        
-        gru_input = torch.cat([h_msm, len_feats], dim=-1) # (B, T, D + 2)
-        gru_input = gru_input.transpose(0,1).contiguous() # (T, B, D)
+            
+        gru_input = h_msm.transpose(0,1).contiguous() # (T, B, D)
         h,_ = self.temporal_block(gru_input, lens) # (B, T, D)
         h = h.transpose(0,1).contiguous()
-        if profiler: profiler.stop()
-        
-        # ALPHA GATE
-        if profiler: profiler.start('alpha gate')
-        # trip_repr = self.contrast_enc.masked_mean_pool(h_msm, padding_mask=padding_mask) # (B, D)
-        # alpha = self.alpha_gate(trip_repr).unsqueeze(1) # (B, 1, 1)
-        # h = alpha * h_msm + (1-alpha) * h
-        # metric['alpha'] = alpha.mean().item()
-        if profiler: profiler.stop()
         
         # ATTENTION POOLING
         if profiler: profiler.start('attn pooling')

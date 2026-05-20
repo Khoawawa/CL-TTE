@@ -139,6 +139,8 @@ class ResidualFiLM(nn.Module):
         
         self.proj = nn.Linear(time_dim, poi_dim * 2)
         
+        self.dropout = nn.Dropout(0.1)
+        
         nn.init.zeros_(self.proj.weight)
         nn.init.zeros_(self.proj.bias)
     def forward(self, x, time_embed):
@@ -146,6 +148,9 @@ class ResidualFiLM(nn.Module):
         # time_embed: (B,D_time)
         
         gamma, beta = self.proj(time_embed).chunk(2, dim=-1) # (B, D_time)
+        
+        gamma = self.dropout(gamma)
+        beta = self.dropout(beta)
         
         gamma = gamma.unsqueeze(1) # (B, 1, D_time)
         beta = beta.unsqueeze(1) # (B, 1, D_time)

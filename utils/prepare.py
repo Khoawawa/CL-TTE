@@ -74,140 +74,62 @@ def parse_maxspeed(raw_val) -> int:
 
     return snap_to_bucket(speed)
 
-LANE_BUCKETS = {
-    0: 0,   # unknown
-    1: 1,
-    2: 2,
-    3: 3,
-    4: 4,
-    5: 5,
-    6: 6,   # cap at 6, anything above is rare and treated as 6
-}
-N_LANE_BUCKETS = 7   # indices 0-6
-
-def parse_lane_value(val: str) -> int:
-    """Parse a single lane string to integer."""
-    try:
-        return max(1, min(6, int(float(val.strip()))))
-    except (ValueError, TypeError):
-        return 0
-
-def parse_lanes(raw_val) -> int:
+def augment_segments(
+    seg,
+    p_poi=0.05,
+    p_seg=0.05,
+    length_noise_std=0.01,
+):
     """
-    Parse OSM lanes tag to bucket index.
-    For list values, takes the minimum (most restrictive).
-    Returns 0 for unknown/invalid.
+    Conservative SSL augmentation.
+
+    Assumes cumulative length is NOT used by contrastive learning.
     """
-    if raw_val is None or str(raw_val).strip() in ('', 'unknown', 'none'):
-        return 0
 
-    raw_str = str(raw_val).strip()
+    seg_aug = seg.copy().astype(np.float32)
 
-    # handle list stored as string: "['2', '1']"
-    if raw_str.startswith('['):
-        try:
-            inner  = raw_str.strip("[]").replace("'", "").replace('"', '')
-            parts  = [p.strip() for p in inner.split(',')]
-            lanes  = [parse_lane_value(p) for p in parts if p]
-            lanes  = [l for l in lanes if l > 0]
-            return min(lanes) if lanes else 0
-        except Exception:
-            return 0
-
-    # handle semicolon format: '1;2'
-    if ';' in raw_str:
-        parts = [p.strip() for p in raw_str.split(';')]
-        lanes = [parse_lane_value(p) for p in parts if p]
-        lanes = [l for l in lanes if l > 0]
-        return min(lanes) if lanes else 0
-
-    return parse_lane_value(raw_str)
-
-def augment_segments(seg,
-                     p_highway=0.1,
-                     p_poi=0.15,
-                     p_seg=0.2,
-                     max_percent_merge= 0.2
-                     ):
-
-    seg_aug = seg.copy() # (T, F)
     T, F = seg_aug.shape
-    
-    if T > 5: # Only merge edges if the trajectory is reasonably long
-        total_len = seg_aug[:, 2].sum()
-        budget = total_len * max_percent_merge
-        absorbed = 0.0
-        i = 0
-        while i < seg_aug.shape[0] - 1 and absorbed < budget:
-            if np.random.rand() < 0.5:
-                len_a = seg_aug[i, 2]
-                len_b = seg_aug[i + 1, 2]
 
-                if absorbed + len_b > budget:
-                    i += 1
-                    continue
+    # =========================================================
+    # MILD POI DROPOUT
+    # =========================================================
 
-                total = len_a + len_b
-                seg_aug[i, 2] = total
+    poi = seg_aug[:, 4:]
 
-                spd_a, spd_b = seg_aug[i, 4], seg_aug[i+1, 4]
-                if spd_a > 0 and spd_b > 0:
-                    seg_aug[i, 4] = round((spd_a * len_a + spd_b * len_b) / total)
-                elif spd_a > 0:
-                    seg_aug[i, 4] = spd_a
-                else:
-                    seg_aug[i, 4] = spd_b
+    mask_poi_rows = (
+        np.random.rand(T, 1) < p_poi
+    )
 
-                ln_a, ln_b = seg_aug[i, 5], seg_aug[i+1, 5]
-                if ln_a > 0 and ln_b > 0:
-                    seg_aug[i, 5] = round((ln_a * len_a + ln_b * len_b) / total)
-                elif ln_a > 0:
-                    seg_aug[i, 5] = ln_a
-                else:
-                    seg_aug[i, 5] = ln_b
-
-                if len_b > len_a:
-                    seg_aug[i, :2] = seg_aug[i+1, :2]
-
-                seg_aug[i, 6:] += seg_aug[i+1, 6:]
-                seg_aug = np.delete(seg_aug, i+1, axis=0)
-                absorbed += len_b
-            else:
-                i += 1
-                
-    T = seg_aug.shape[0]
-
-    # --- Highway dropout ---
-    highway = seg_aug[:, :2]
-    mask_hw = np.random.rand(*highway.shape) < p_highway
-    highway[mask_hw] = 1  # unclassified
-    seg_aug[:, :2] = highway
-
-    # --- POI dropout ---
-    poi = seg_aug[:, 6:]
-    mask_poi_rows = np.random.rand(T, 1) < p_poi
     poi = poi * (~mask_poi_rows)
-    seg_aug[:, 6:] = poi
 
-    # --- Segment dropout (feature masking, NOT removal) ---
+    seg_aug[:, 4:] = poi
+
+    # =========================================================
+    # VERY LIGHT FEATURE MASKING
+    # =========================================================
+
     seg_mask = np.random.rand(T) < p_seg
 
-    # prevent full collapse
     if seg_mask.all():
         seg_mask[np.random.randint(T)] = False
-        
-    seg_aug[seg_mask, 0:2] = 1  # highway → unclassified
-    seg_aug[seg_mask, 4] = 0  # speed bucket → unknown
-    seg_aug[seg_mask, 5] = 0  # lane bucket → unknown
-    seg_aug[seg_mask, 6:] = 0  # pois → no pois
-    
-    noise = np.random.normal(1.0, 0.03, size=seg_aug[:, 2].shape)  # ±3% multiplicative
+    seg_aug[seg_mask, 0:2] = 1 # highway -> unclassified
+    # speed bucket -> unknown (len(SPEED_BUCKETS))
+    seg_aug[seg_mask, 3] = len(SPEED_BUCKETS)
+    # remove poi context
+    seg_aug[seg_mask, 4:] = 0
+
+    # =========================================================
+    # SMALL LENGTH NOISE
+    # =========================================================
+
+    noise = np.random.normal(
+        loc=1.0,
+        scale=length_noise_std,
+        size=seg_aug[:, 2].shape
+    )
+
     seg_aug[:, 2] *= noise
-    seg_aug[:, 2] = np.clip(seg_aug[:, 2], a_min=1.0, a_max=None)  # ensure length is positive
-    
-    cum = np.cumsum(seg_aug[:, 2])
-    seg_aug[:, 3] = np.concatenate([[0], cum[:-1]])
-    
+
     return seg_aug, T
 
 def preprocess_edgeinfo(edgeinfo,args):
@@ -219,16 +141,22 @@ def preprocess_edgeinfo(edgeinfo,args):
     for k, info in edgeinfo.items():
         hw_ids = parse_highway_tags(info[0])
         speed_bucket = parse_maxspeed(info[4 + args.data_config['n_poi_groups']])
-        lane_bucket = parse_lanes(info[4 + args.data_config['n_poi_groups'] + 1])
-        poi_self = np.array(info[4:4 + args.data_config['n_poi_groups']], dtype=np.float32)
+        #lane_bucket = parse_lanes(info[4 + args.data_config['n_poi_groups'] + 1])
+        poi_self = (
+            np.array(
+                info[4:4 + args.data_config['n_poi_groups']],
+                dtype=np.float32
+            ) > 0
+        ).astype(np.float32)
         
         new_edgeinfo[k] = [
             hw_ids,      # already parsed
             info[1],
             speed_bucket,  # parsed speed bucket
-            lane_bucket,         # parsed lanes
+            # lane_bucket,         # parsed lanes
             *poi_self,
-        ] # 1 + 1 + n_poi_groups = 1 + 1 + n_poi_groups features per edge
+            k
+        ]
 
     return new_edgeinfo
     
@@ -270,61 +198,85 @@ def collate_func(data, args, info_all):
     lens = np.array([len(k) for k in linkids])
     max_seq_len = lens.max()
     
-    feature_dim = 4 + 2 + args.data_config['n_poi_groups'] # highway(2), length(1), cum_length(1), pois(n_poi_groups)
+    feature_dim = 2 + 1 + 1 + args.data_config['n_poi_groups'] # highway(2), length(1), speed(1), pois(n_poi_groups)
     
-    def get_infos(xs):
+    padded_clean = np.zeros(
+        (len(data), max_seq_len, feature_dim),
+        dtype=np.float32
+    )
+    padded_culm = np.zeros(
+        (len(data), max_seq_len, 1),
+        dtype=np.float32
+    )
+    padded_edgeids = np.zeros(
+        (len(data), max_seq_len),
+        dtype=np.int64
+    )
+    for i, xs in enumerate(linkids):
+        
         L = len(xs)
         
         seg = np.zeros((L, feature_dim), dtype=np.float32)
         
-        for i, x in enumerate(xs):
+        for j, x in enumerate(xs):
             info = edgeinfo[x]
             
-            seg[i, :2] = info[0]
-            seg[i,2] = info[1] # length
-            seg[i, 4] = info[2] # speed_bucket
-            seg[i, 5] = info[3] # lane_bucket
+            seg[j, :2] = info[0]     # highway
+            seg[j, 2] = info[1]     # length
+            seg[j, 3] = info[2]     # speed bucket
             
-            seg[i, 6:6+args.data_config['n_poi_groups']] = info[4:4+args.data_config['n_poi_groups']]
+            seg[
+                j,
+                4:4 + args.data_config['n_poi_groups']
+            ] = info[
+                3:3 + args.data_config['n_poi_groups']
+            ]
             
-        lengths = seg[:, 2]
-        cum = np.cumsum(lengths)
-        seg[:, 3] = np.concatenate([[0], cum[:-1]])
+            padded_edgeids[i, j] = info[-1] # edge id for potential future use
         
-        return seg
-    
-    total_len = sum(lens)
-    
-    all_segments = np.zeros((total_len, feature_dim), dtype=np.float32)
+        raw_lengths = info_lengths = np.asarray(
+            [edgeinfo[x][1] for x in xs],
+            dtype=np.float32
+        )
 
-    ptr = 0
-    for b in linkids:
-        seg = get_infos(b)
-        L = len(seg)
+        cum = np.cumsum(raw_lengths)
+
+        culm_len = np.concatenate(
+            [[0.0], cum[:-1]]
+        )
+        length_and_culm = np.stack(
+            [seg[:, 2], culm_len],
+            axis=-1
+        )
+        length_and_culm = scaler.transform(
+            length_and_culm
+        )
+
+        seg[:, 2] = length_and_culm[:, 0]
+
+        culm_len = length_and_culm[:, 1]
         
-        all_segments[ptr:ptr+L] = seg
-        ptr += L
+        padded_clean[i, :L] = seg
         
-    feature_dim = all_segments.shape[1]
+        padded_culm[i, :L, 0] = culm_len
     
-    padded_clean = np.zeros((len(data), max_seq_len, feature_dim), dtype=np.float32)
-    
-    curr_idx = 0
-    
+    padded_aug = np.zeros_like(padded_clean)
     for i, l in enumerate(lens):
-        seg_raw = all_segments[curr_idx : curr_idx + l].copy()
-        
-        seg_raw[:, 2:4] = scaler.transform(seg_raw[:, 2:4])
-        padded_clean[i, :l] = seg_raw
-        
-        curr_idx += l
-        
+        seg_raw = padded_clean[i, :l].copy()
+        seg_aug, _ = augment_segments(seg_raw)
+        padded_aug[i, :l] = seg_aug
+
     return {
         'links_clean': torch.from_numpy(padded_clean),
+        'links_aug': torch.from_numpy(padded_aug),
         'dateinfo': torch.from_numpy(np.asarray(dateinfo, dtype=np.float32)),
-        'lens': torch.LongTensor(lens), 
-        'inds': inds, 
+        'culm_len': torch.from_numpy(padded_culm),
+        'link_index': torch.from_numpy(padded_edgeids),
+        'lens': torch.LongTensor(lens),
+        'inds': inds,
     }, time
+        
+    
 
 class BatchSampler:
     def __init__(self, dataset, batch_size):
@@ -392,21 +344,25 @@ class VarianceBucketSampler:
             chunk_idx = self.indices[start:end]
             
             # 3. Sort the mega-chunk by length (This bounds our max padding)
-            chunk_idx.sort(key=lambda x: self.lengths[x], reverse=True)
+            chunk_idx.sort(
+                key=lambda x: (
+                    self.lengths[x] + np.random.randint(-10, 10)
+                ),
+                reverse=True
+            )
             
             # 4. THE FIX: Sub-pool shuffling
             # Group into pools of e.g. 10 batches. 
             # Shuffle INSIDE the pool before yielding to guarantee variance.
-            pool_size = self.batch_size * self.pool_factor
-            
-            for p in range(0, len(chunk_idx), pool_size):
-                pool_start = p
-                pool_end = min(p + pool_size, len(chunk_idx))
-                
-                # Extract pool, shuffle it, and put it back
-                pool = chunk_idx[pool_start:pool_end]
-                np.random.shuffle(pool) 
-                chunk_idx[pool_start:pool_end] = pool
+            window = self.batch_size * 4
+
+            for s in range(0, len(chunk_idx), window):
+
+                sub = chunk_idx[s:s+window]
+
+                np.random.shuffle(sub)
+
+                chunk_idx[s:s+window] = sub
                 
             self.indices[start:end] = chunk_idx
 
