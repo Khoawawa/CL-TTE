@@ -26,7 +26,7 @@ class ContrastiveModule(nn.Module):
             d_model=d_model, 
             nhead=nhead,
             tau_I=tau_I, 
-            dropout=dropout, 
+            dropout1=dropout, 
             nlayer=nlayer, 
             contrastive_temperature=contrastive_temperature
         )
