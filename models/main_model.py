@@ -23,8 +23,7 @@ class Cl_TTE(nn.Module):
             contrastive_temperature=contrastive_temperature
         )
         
-        
-        self.temporal_block = LayerNormGRU(input_dim=d_model + 1, hidden_dim=d_model, num_layers=gru_layers)
+        self.temporal_block = LayerNormGRU(input_dim=d_model+1, hidden_dim=d_model, num_layers=gru_layers)
         
         # ATTENTION POOLING
         self.pool_query = nn.Parameter(torch.randn(1,1,d_model))
@@ -61,7 +60,8 @@ class Cl_TTE(nn.Module):
             src_key_padding_mask=padding_mask, 
             src_key_augment_padding_mask=padding_mask
         )
-            
+
+        h_msm = torch.cat([h_msm, culm_len], dim=-1) # (B, T, D+1)
         gru_input = h_msm.transpose(0,1).contiguous() # (T, B, D)
         h,_ = self.temporal_block(gru_input, lens) # (B, T, D)
         h = h.transpose(0,1).contiguous()
