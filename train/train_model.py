@@ -37,7 +37,7 @@ def train_model(model:          Cl_TTE,
     # ---- Build scheduler if not provided (fresh training) -----------------
     if scheduler is None:
         steps_per_epoch = len(data_loaders['train'])
-        total_steps     = steps_per_epoch * getattr(args, 'max_epochs', 20)
+        total_steps     = steps_per_epoch * getattr(args, 'max_epochs', 50)
         warmup_steps    = max(1, int(0.05 * total_steps))
         scheduler       = get_warmup_cosine_scheduler_with_floor(optimizer, warmup_steps, total_steps)
         print(f"Scheduler: warmup {warmup_steps} steps, total {total_steps} steps")
