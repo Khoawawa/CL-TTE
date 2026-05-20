@@ -31,7 +31,7 @@ class Cl_TTE(nn.Module):
         self.attn = nn.MultiheadAttention(d_model, nhead, dropout=0.1, batch_first=True)
         
         # REGRESSION
-        mlp_in_dim = d_model + self.enc.datetime_dim
+        mlp_in_dim = d_model + self.contrastive_module.time_encoder.datetime_dim
         self.pre_regression_norm = nn.LayerNorm(d_model)
         self.regression_mlp = nn.Sequential(
             nn.Linear(mlp_in_dim, mlp_in_dim//2),
