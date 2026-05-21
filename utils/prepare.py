@@ -208,12 +208,12 @@ def collate_func(data, args, info_all):
     edgeinfo, edge_matrix, edge_id_col, scaler, overlap_matrix = info_all  # <-- unpack new fields
 
     time      = torch.Tensor([d[-1] for d in data])
-    linkids   = [np.asarray(l[1]) for l in data]
     dateinfo  = [[int(l[2]), float(l[3]), float(l[4])] for l in data]
     inds      = [l[0] for l in data]
 
     # ignore_mask_np = overlap_matrix[np.ix_(inds, inds)]  # (B, B) boolean numpy array
-    
+    max_allowed_len = 128
+    linkids   = [np.asarray(l[1])[:max_allowed_len] for l in data]
     lens        = np.array([len(k) for k in linkids])
     max_seq_len = lens.max()
     feature_dim = edge_matrix.shape[1]
