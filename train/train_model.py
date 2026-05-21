@@ -18,7 +18,44 @@ from utils.prepare import create_loss
 def set_requires_grad(module, flag: bool):
     for p in module.parameters():
         p.requires_grad = flag
+def profile_components(model, data_loader, device):
+    model.train()
+    batch, truth = next(iter(data_loader))
+    features   = to_var(batch, device)
+    truth_data = truth.to(device)
+
+    x         = features['links_clean']
+    x_aug     = features['links_aug']
+    dateinfo  = features['dateinfo']
+    culm_len  = features['culm_len']
+    mask      = features.get('src_key_padding_mask', None)
+
+    def measure(label, fn):
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats(device)
+        before = torch.cuda.memory_allocated(device)
+        out = fn()
+        torch.cuda.synchronize()
+        after = torch.cuda.memory_allocated(device)
+        peak  = torch.cuda.max_memory_allocated(device)
+        print(f"{label:35s} alloc delta: {(after-before)/1e9:.3f}GB  peak: {(peak-before)/1e9:.3f}GB")
+        return out
+
+    with torch.amp.autocast(device_type='cuda'):
+        dtrep     = measure("time_encoder",     lambda: model.contrastive_module.time_encoder(dateinfo))
+        orig_repr = measure("segment_encoder(x)",    lambda: model.contrastive_module.segment_encoder(x))
+        aug_repr  = measure("segment_encoder(x_aug)",lambda: model.contrastive_module.segment_encoder(x_aug))
+        orig_film = measure("film(orig)",        lambda: model.contrastive_module.film(orig_repr, dtrep))
+        aug_film  = measure("film(aug)",         lambda: model.contrastive_module.film(aug_repr,  dtrep))
+
+        h, trip_orig = measure("encode(orig)",   lambda: model.contrastive_module.contrastive_encoder.encode(orig_film, mask))
         
+        with torch.no_grad():
+            _, trip_aug = measure("encode(aug) no_grad", lambda: model.contrastive_module.contrastive_encoder.encode(aug_film, mask))
+        
+        measure("contrastive_loss",  lambda: model.contrastive_module.contrastive_encoder.calculate_contrastive_loss(trip_orig, trip_aug))
+        measure("after_proj",        lambda: model.contrastive_module.after_proj(torch.cat([h, culm_len], dim=-1)))
+
 def profile_single_batch(model, data_loader, device, args):
     model.train()
     batch, truth = next(iter(data_loader))
@@ -106,6 +143,7 @@ def train_model(model:          Cl_TTE,
     model.use_contrastive = True
     
     profile_single_batch(model, data_loaders['train'], args.device, args)
+    profile_components(model, data_loaders['train'], args.device)
     try:
         for epoch in range(start_epoch, args.epochs):
             running_loss = {phase: 0.0 for phase in phases}
