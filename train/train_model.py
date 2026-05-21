@@ -55,7 +55,7 @@ def profile_components(model, data_loader, device):
         with torch.no_grad():
             _, trip_aug = measure("encode(aug) no_grad", lambda: model.contrastive_module.contrastive_encoder.encode(aug_film, mask))
         
-        measure("contrastive_loss",  lambda: model.contrastive_module.contrastive_encoder.calculate_contrastive_loss(trip_orig, trip_aug))
+        measure("contrastive_loss",  lambda: model.contrastive_module.contrastive_encoder.calculate_contrastive_loss(trip_orig, trip_aug, None))
         measure("after_proj",        lambda: model.contrastive_module.after_proj(torch.cat([h, culm_len], dim=-1)))
 
 def profile_single_batch(model, data_loader, device, args):
@@ -144,8 +144,8 @@ def train_model(model:          Cl_TTE,
     print(f"Starting LR: {optimizer.param_groups[0]['lr']:.2e}")
     model.use_contrastive = True
     
-    profile_single_batch(model, data_loaders['train'], args.device, args)
-    profile_components(model, data_loaders['train'], args.device)
+    # profile_single_batch(model, data_loaders['train'], args.device, args)
+    # profile_components(model, data_loaders['train'], args.device)
     try:
         for epoch in range(start_epoch, args.epochs):
             running_loss = {phase: 0.0 for phase in phases}
