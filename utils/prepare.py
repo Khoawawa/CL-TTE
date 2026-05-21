@@ -212,7 +212,7 @@ def collate_func(data, args, info_all):
     inds      = [l[0] for l in data]
 
     # ignore_mask_np = overlap_matrix[np.ix_(inds, inds)]  # (B, B) boolean numpy array
-    max_allowed_len = 128
+    max_allowed_len = 300
     linkids   = [np.asarray(l[1])[:max_allowed_len] for l in data]
     lens        = np.array([len(k) for k in linkids])
     max_seq_len = lens.max()
