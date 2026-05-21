@@ -13,13 +13,13 @@ from models.main_model import Cl_TTE
 from utils.metric import calculate_metrics
 from utils.util import save_model, to_var, get_warmup_cosine_scheduler_with_floor, LossBalancer
 from torch.cuda import memory_allocated, memory_reserved, reset_peak_memory_stats
-
+from utils.prepare import create_loss
 
 def set_requires_grad(module, flag: bool):
     for p in module.parameters():
         p.requires_grad = flag
         
-def profile_single_batch(model, data_loader, device):
+def profile_single_batch(model, data_loader, device, args):
     model.train()
     batch, truth = next(iter(data_loader))
     
@@ -44,6 +44,7 @@ def profile_single_batch(model, data_loader, device):
 
     # --- backward ---
     reset_peak_memory_stats(device)
+    loss_func = create_loss(args)
     loss_func(truth=truth_data, predict=output).backward()
     
     peak_bwd = torch.cuda.max_memory_allocated(device)
@@ -104,7 +105,7 @@ def train_model(model:          Cl_TTE,
     print(f"Starting LR: {optimizer.param_groups[0]['lr']:.2e}")
     model.use_contrastive = True
     
-    profile_single_batch(model, data_loaders['train'], args.device)
+    profile_single_batch(model, data_loaders['train'], args.device, args)
     try:
         for epoch in range(start_epoch, args.epochs):
             running_loss = {phase: 0.0 for phase in phases}
