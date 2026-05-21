@@ -57,4 +57,6 @@ class ContrastiveModule(nn.Module):
         
         h_msm = self.after_proj(torch.cat([h_msm, culm_len], dim=-1))
         
+        # let downstream task affect 10% of gradient for better alignment
+        h_msm = h_msm * 0.9 + 0.1 * h_msm.detach() 
         return h_msm.detach(), datetimerep,loss_cl, metric
