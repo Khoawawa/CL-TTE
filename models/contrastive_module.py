@@ -39,14 +39,16 @@ class ContrastiveModule(nn.Module):
         # dateinfo: (B, 3)
         # culm_len: (B, T, 1)
         
+        datetimerep = self.time_encoder(dateinfo)
+
         x_all = torch.cat([x, x_aug], dim=0)
         
-        trip_repr = self.segment_encoder(x_all)
+        orig_repr = self.segment_encoder(x)
+        aug_repr = self.segment_encoder(x_aug)
         
-        datetimerep = self.time_encoder(dateinfo)
-        
-        orig_repr, aug_repr = trip_repr.chunk(2, dim=0)
-        
+        orig_repr = self.film(orig_repr, datetimerep)
+        aug_repr = self.film(aug_repr, datetimerep)
+                
         h_msm, loss_cl, metric = self.contrastive_encoder(
             orig_repr,
             aug_repr,
