@@ -20,11 +20,13 @@ def set_requires_grad(module, flag: bool):
         p.requires_grad = flag
 def profile_components(model, data_loader, device):
     model.train()
+    
     batch, truth = next(iter(data_loader))
     features   = to_var(batch, device)
     truth_data = truth.to(device)
 
     x         = features['links_clean']
+    print(f"B={x.shape[0]}  T={x.shape[1]}  F={x.shape[2]}")
     x_aug     = features['links_aug']
     dateinfo  = features['dateinfo']
     culm_len  = features['culm_len']
