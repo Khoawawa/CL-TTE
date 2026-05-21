@@ -132,34 +132,58 @@ def augment_segments(
 
     return seg_aug, T
 
-def preprocess_edgeinfo(edgeinfo,args):
+def preprocess_edgeinfo(edgeinfo, args):
+    """Returns both the dict (legacy) and a dense numpy matrix for fast batch lookup."""
+    n_poi = args.data_config['n_poi_groups']
+    feature_dim = 2 + 1 + 1 + n_poi  # hw(2), length(1), speed(1), poi(n)
+
     new_edgeinfo = {}
+    max_id = max(edgeinfo.keys()) if edgeinfo else 0
+    # +1 row as a zero-pad for edge id 0 / missing
+    edge_matrix = np.zeros((max_id + 2, feature_dim), dtype=np.float32)
+    edge_id_col = np.zeros(max_id + 2, dtype=np.int64)
 
-    # edge_neighbors = build_edge_adjacency(edgeinfo)
-    # deg_in, deg_out = compute_node_degree(edgeinfo)
-    
     for k, info in edgeinfo.items():
-        hw_ids = parse_highway_tags(info[0])
-        speed_bucket = parse_maxspeed(info[4 + args.data_config['n_poi_groups']])
-        #lane_bucket = parse_lanes(info[4 + args.data_config['n_poi_groups'] + 1])
-        poi_self = (
-            np.array(
-                info[4:4 + args.data_config['n_poi_groups']],
-                dtype=np.float32
-            ) > 0
-        ).astype(np.float32)
-        
-        new_edgeinfo[k] = [
-            hw_ids,      # already parsed
-            info[1],
-            speed_bucket,  # parsed speed bucket
-            # lane_bucket,         # parsed lanes
-            *poi_self,
-            k
-        ]
+        hw_ids     = parse_highway_tags(info[0])
+        speed_buck = parse_maxspeed(info[4 + n_poi])
+        poi_self   = (np.array(info[4:4 + n_poi], dtype=np.float32) > 0).astype(np.float32)
 
-    return new_edgeinfo
-    
+        row = np.array([*hw_ids, info[1], speed_buck, *poi_self], dtype=np.float32)
+        edge_matrix[k] = row
+        edge_id_col[k] = k
+
+        new_edgeinfo[k] = [hw_ids, info[1], speed_buck, *poi_self, k]
+
+    return new_edgeinfo, edge_matrix, edge_id_col
+def precompute_overlap_mask(dataset, max_edge_id):
+    """
+    Builds a boolean array: overlap[i, j] = True if trips i and j share >80% edges.
+    Runs once on CPU at startup. Stored as a uint8 array to save RAM.
+    """
+    N = len(dataset)
+    # represent each trip as a set
+    trip_sets = []
+    for d in dataset:
+        ids = set(int(x) for x in d[1] if x != 0)
+        trip_sets.append(ids)
+
+    # sparse storage — only store the True pairs
+    overlap = np.zeros((N, N), dtype=np.bool_)
+    for i in range(N):
+        si = trip_sets[i]
+        li = len(si)
+        if li == 0:
+            continue
+        for j in range(i + 1, N):
+            sj = trip_sets[j]
+            inter = len(si & sj)
+            ratio = inter / (min(li, len(sj)) + 1e-6)
+            if ratio > 0.8:
+                overlap[i, j] = True
+                overlap[j, i] = True
+
+    return overlap
+
 def parse_highway_tags(raw_val, max_tags=2):
     UNCLASSIFIED_ID = 1
 
@@ -181,99 +205,55 @@ def parse_highway_tags(raw_val, max_tags=2):
     return ids
 
 def collate_func(data, args, info_all):
-    edgeinfo, scaler = info_all
+    edgeinfo, edge_matrix, edge_id_col, scaler, overlap_matrix = info_all  # <-- unpack new fields
 
-    time = torch.Tensor([d[-1] for d in data])
-    linkids = [np.asarray(l[1]) for l in data]
-    dateinfo = []
-    inds = []
+    time      = torch.Tensor([d[-1] for d in data])
+    linkids   = [np.asarray(l[1]) for l in data]
+    dateinfo  = [[int(l[2]), float(l[3]), float(l[4])] for l in data]
+    inds      = [l[0] for l in data]
 
-    for l in data:
-        wday = int(l[2])
-        doy_raw = float(l[3])        # 1-365
-        minute_raw = float(l[4])
-        dateinfo.append([wday, doy_raw, minute_raw])
-        inds.append(l[0])
+    ignore_mask_np = overlap_matrix[np.ix_(inds, inds)]  # (B, B) boolean numpy array
     
-    lens = np.array([len(k) for k in linkids])
+    lens        = np.array([len(k) for k in linkids])
     max_seq_len = lens.max()
-    
-    feature_dim = 2 + 1 + 1 + args.data_config['n_poi_groups'] # highway(2), length(1), speed(1), pois(n_poi_groups)
-    
-    padded_clean = np.zeros(
-        (len(data), max_seq_len, feature_dim),
-        dtype=np.float32
-    )
-    padded_culm = np.zeros(
-        (len(data), max_seq_len, 1),
-        dtype=np.float32
-    )
-    padded_edgeids = np.zeros(
-        (len(data), max_seq_len),
-        dtype=np.int64
-    )
+    feature_dim = edge_matrix.shape[1]
+
+    padded_clean   = np.zeros((len(data), max_seq_len, feature_dim), dtype=np.float32)
+    padded_culm    = np.zeros((len(data), max_seq_len, 1),           dtype=np.float32)
+    padded_edgeids = np.zeros((len(data), max_seq_len),              dtype=np.int64)
+
     for i, xs in enumerate(linkids):
-        
         L = len(xs)
-        
-        seg = np.zeros((L, feature_dim), dtype=np.float32)
-        
-        for j, x in enumerate(xs):
-            info = edgeinfo[x]
-            
-            seg[j, :2] = info[0]     # highway
-            seg[j, 2] = info[1]     # length
-            seg[j, 3] = info[2]     # speed bucket
-            
-            seg[
-                j,
-                4:4 + args.data_config['n_poi_groups']
-            ] = info[
-                3:3 + args.data_config['n_poi_groups']
-            ]
-            
-            padded_edgeids[i, j] = info[-1] # edge id for potential future use
-        
-        raw_lengths = info_lengths = np.asarray(
-            [edgeinfo[x][1] for x in xs],
-            dtype=np.float32
-        )
+        # ---- single vectorized lookup instead of a Python loop ----
+        seg                = edge_matrix[xs]          # (L, F)
+        padded_edgeids[i, :L] = edge_id_col[xs]
 
-        cum = np.cumsum(raw_lengths)
+        raw_lengths = seg[:, 2].copy()                # length column, before scaling
+        cum         = np.cumsum(raw_lengths)
+        culm_len    = np.concatenate([[0.0], cum[:-1]])
 
-        culm_len = np.concatenate(
-            [[0.0], cum[:-1]]
-        )
-        length_and_culm = np.stack(
-            [seg[:, 2], culm_len],
-            axis=-1
-        )
-        length_and_culm = scaler.transform(
-            length_and_culm
-        )
+        length_and_culm  = np.stack([seg[:, 2], culm_len], axis=-1)
+        length_and_culm  = scaler.transform(length_and_culm)
+        seg[:, 2]        = length_and_culm[:, 0]
+        culm_len         = length_and_culm[:, 1]
 
-        seg[:, 2] = length_and_culm[:, 0]
+        padded_clean[i, :L]    = seg
+        padded_culm[i, :L, 0]  = culm_len
 
-        culm_len = length_and_culm[:, 1]
-        
-        padded_clean[i, :L] = seg
-        
-        padded_culm[i, :L, 0] = culm_len
-    
-    padded_aug = np.zeros_like(padded_clean)
+    # augmentation — batch it all at once instead of per-sample loop
+    padded_aug = padded_clean.copy()
     for i, l in enumerate(lens):
-        seg_raw = padded_clean[i, :l].copy()
-        seg_aug, _ = augment_segments(seg_raw)
+        seg_aug, _ = augment_segments(padded_clean[i, :l])
         padded_aug[i, :l] = seg_aug
 
     return {
         'links_clean': torch.from_numpy(padded_clean),
-        'links_aug': torch.from_numpy(padded_aug),
-        'dateinfo': torch.from_numpy(np.asarray(dateinfo, dtype=np.float32)),
-        'culm_len': torch.from_numpy(padded_culm),
-        'link_index': torch.from_numpy(padded_edgeids),
-        'lens': torch.LongTensor(lens),
-        'inds': inds,
+        'links_aug':   torch.from_numpy(padded_aug),
+        'dateinfo':    torch.from_numpy(np.asarray(dateinfo, dtype=np.float32)),
+        'culm_len':    torch.from_numpy(padded_culm),
+        'ignore_mask': torch.from_numpy(ignore_mask_np),
+        'lens':        torch.LongTensor(lens),
+        'inds':        inds,
     }, time
         
     
@@ -384,8 +364,10 @@ def load_datadoct_pre(args):
     
     with open(os.path.join(args.absPath,args.data_config['edges_dir']), 'rb') as f:
         edgeinfo = pickle.load(f)
-    new_edgeinfo = preprocess_edgeinfo(edgeinfo, args)
+    new_edgeinfo, edge_matrix, edge_id_col = preprocess_edgeinfo(edgeinfo, args)
     
+    tdata_train = np.load(os.path.join(args.absPath, args.data_config['data_dir'], 'train.npy'), allow_pickle=True)
+    overlap_matrix = precompute_overlap_mask(tdata_train, max_edge_id=edge_matrix.shape[0]-1)
     
     # with open(os.path.join(args.absPath,args.data_config['nodes_dir']), 'rb') as f:
     #     nodeinfo = pickle.load(f)
@@ -425,7 +407,7 @@ def load_datadoct_pre(args):
     else:
         ValueError("Wrong Dataset Name")
 
-    info_all = [new_edgeinfo, scaler]
+    info_all = [new_edgeinfo, edge_matrix, edge_id_col, scaler, overlap_matrix]
 
 
 class Datadict(Dataset):
@@ -462,7 +444,8 @@ def load_datadict(args):
                 batch_sampler=VarianceBucketSampler(data[phase], args.batch_size, pool_factor=5),
                 collate_fn=lambda x: collate_func(x, args, info_all),
                 pin_memory=True,
-                num_workers=2
+                num_workers=2,
+                persistent_workers=True
             )
         else:
             

@@ -33,15 +33,13 @@ class ContrastiveModule(nn.Module):
         
         self.after_proj = nn.Linear(d_model + 1, d_model)
     
-    def forward(self, x, x_aug, dateinfo, culm_len, link_index, src_key_padding_mask=None, src_key_augment_padding_mask=None):
+    def forward(self, x, x_aug, dateinfo, culm_len, ignore_mask, src_key_padding_mask=None, src_key_augment_padding_mask=None):
         # x: (B, T, D)
         # x_aug: (B, T, D)
         # dateinfo: (B, 3)
         # culm_len: (B, T, 1)
         
         datetimerep = self.time_encoder(dateinfo)
-
-        x_all = torch.cat([x, x_aug], dim=0)
         
         orig_repr = self.segment_encoder(x)
         aug_repr = self.segment_encoder(x_aug)
@@ -52,7 +50,7 @@ class ContrastiveModule(nn.Module):
         h_msm, loss_cl, metric = self.contrastive_encoder(
             orig_repr,
             aug_repr,
-            link_index=link_index,
+            ignore_mask=ignore_mask,
             src_key_padding_mask=src_key_padding_mask,
             src_key_augment_padding_mask=src_key_augment_padding_mask
         )
