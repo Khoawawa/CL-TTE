@@ -128,7 +128,7 @@ class ContrastiveEncoder(nn.Module):
             total_loss = (
                 loss +
                 1.0 * loss_var +
-                0.05 * loss_cov
+                0.1 * loss_cov
             )
 
         # =====================================================

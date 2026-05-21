@@ -66,9 +66,9 @@ class EncoderLayer(nn.Module):
         super().__init__()
         self.attn = RoPEAttention(d_model, nhead, dropout1, dropout2)
         
-        self.ffn_linear1 = nn.Linear(d_model, d_model * 4)
+        self.ffn_linear1 = nn.Linear(d_model, d_model * 2)
         self.ffn_act = nn.GELU()
-        self.ffn_linear2 = nn.Linear(d_model * 4, d_model)
+        self.ffn_linear2 = nn.Linear(d_model * 2, d_model)
         
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)

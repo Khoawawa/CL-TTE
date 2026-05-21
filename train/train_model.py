@@ -12,13 +12,52 @@ from tqdm import tqdm
 from models.main_model import Cl_TTE
 from utils.metric import calculate_metrics
 from utils.util import save_model, to_var, get_warmup_cosine_scheduler_with_floor, LossBalancer
+from torch.cuda import memory_allocated, memory_reserved, reset_peak_memory_stats
 
 
 def set_requires_grad(module, flag: bool):
     for p in module.parameters():
         p.requires_grad = flag
         
+def profile_single_batch(model, data_loader, device):
+    model.train()
+    batch, truth = next(iter(data_loader))
+    
+    # move to GPU
+    features   = to_var(batch, device)
+    truth_data = truth.to(device)
+    
+    reset_peak_memory_stats(device)
+    baseline = memory_allocated(device)
+    print(f"baseline (model weights):     {baseline/1e9:.3f} GB")
 
+    # --- forward only ---
+    reset_peak_memory_stats(device)
+    with torch.amp.autocast(device_type='cuda'):
+        output, loss_cl, cl_metric = model(features, truth_data)
+    
+    after_fwd = memory_allocated(device)
+    peak_fwd  = torch.cuda.max_memory_allocated(device)
+    print(f"after forward:                {after_fwd/1e9:.3f} GB")
+    print(f"peak during forward:          {peak_fwd/1e9:.3f} GB")
+    print(f"forward activations:          {(peak_fwd - baseline)/1e9:.3f} GB")
+
+    # --- backward ---
+    reset_peak_memory_stats(device)
+    loss_func(truth=truth_data, predict=output).backward()
+    
+    peak_bwd = torch.cuda.max_memory_allocated(device)
+    print(f"peak during backward:         {peak_bwd/1e9:.3f} GB")
+    print(f"backward overhead:            {(peak_bwd - after_fwd)/1e9:.3f} GB")
+
+    # --- what's left after del ---
+    del output, loss_cl
+    torch.cuda.empty_cache()
+    after_del = memory_allocated(device)
+    print(f"after del + empty_cache:      {after_del/1e9:.3f} GB")
+    print(f"leaked this batch:            {(after_del - baseline)/1e9:.3f} GB")
+
+# profile_single_batch(model, data_loaders['train'], args.device)
 def train_model(model:          Cl_TTE,
                 data_loaders:   Dict[str, DataLoader],
                 loss_func:      callable,
@@ -64,15 +103,21 @@ def train_model(model:          Cl_TTE,
 
     print(f"Starting LR: {optimizer.param_groups[0]['lr']:.2e}")
     model.use_contrastive = True
+    
+    profile_single_batch(model, data_loaders['train'], args.device)
     try:
         for epoch in range(start_epoch, args.epochs):
             running_loss = {phase: 0.0 for phase in phases}
-
+            
             for phase in phases:
                 args.phase = phase
                 model.train() if phase == 'train' else model.eval()
-
-                steps, predictions, targets = 0, [], []
+                
+                n_samples   = len(data_loaders[phase].dataset)
+                predictions = np.empty(n_samples, dtype=np.float32)
+                targets_arr = np.empty(n_samples, dtype=np.float32)
+                cursor      = 0
+                steps = 0
                 tqdm_loader = tqdm(data_loaders[phase], mininterval=3)
 
                 for features, truth_data in tqdm_loader:
@@ -132,22 +177,24 @@ def train_model(model:          Cl_TTE,
 
                     # Optimized performance tracking: Append tensors on GPU directly
                     with torch.no_grad():
-                        predictions.append(output.detach().cpu())
-                        targets.append(truth_data.detach().cpu())
+                        pred_np = output.detach().float().cpu().numpy().reshape(-1)
+                        tgt_np  = truth_data.detach().float().cpu().numpy().reshape(-1)
+                        B_actual = len(pred_np)
+                        predictions[cursor:cursor + B_actual] = pred_np
+                        targets_arr[cursor:cursor + B_actual] = tgt_np
+                        cursor += B_actual
+
 
                     running_loss[phase] += loss.item() * truth_data.size(0)
-
+                    
+                    del output, loss, loss_eta, loss_cl
                 # Clean execution states before pushing to CPU metric suites
                 torch.cuda.empty_cache()
                 gc.collect()
-
-                # Concatenate on GPU exactly once, then drop to CPU arrays
-                predictions = torch.cat(predictions, dim=0).numpy()
-                targets     = torch.cat(targets, dim=0).numpy()
                 
                 scores      = calculate_metrics(
-                    predictions.reshape(predictions.shape[0], -1),
-                    targets.reshape(targets.shape[0], -1),
+                    predictions[:cursor].reshape(-1, 1),
+                    targets_arr[:cursor].reshape(-1, 1),
                     args,
                     plot=(epoch % 5 == 0),
                     **kwargs
