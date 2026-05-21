@@ -60,16 +60,9 @@ class ContrastiveEncoder(nn.Module):
             # =========================================
             # sim matrix
             # =========================================
-
-            sim = torch.matmul(
-                z1,
-                z2.T
-            )
-
-            sim = (
-                sim /
-                self.contrastive_temperature
-            )
+            raw_sim = torch.matmul(z1, z2.T)
+            
+            sim = raw_sim / self.contrastive_temperature
 
             logits_mask = ~torch.eye(
                 B,
@@ -138,11 +131,6 @@ class ContrastiveEncoder(nn.Module):
         # =====================================================
 
         with torch.no_grad():
-
-            raw_sim = torch.matmul(
-                z1,
-                z2.T
-            )
 
             offdiag = raw_sim[logits_mask]
 
@@ -245,45 +233,6 @@ class ContrastiveEncoder(nn.Module):
         )
 
         return h, trip_repr
-    
-    def detect_potential_overlap(self, link_index):
-        
-        valid_mask = (link_index != 0)
-        valid_lens = valid_mask.sum(dim=1).float()
-        
-        B, T = link_index.shape
-        device = link_index.device
-        
-        li = link_index.unsqueeze(1)
-        lj = link_index.unsqueeze(0)
-        
-        sorted_j, _ = lj.sort(dim=-1)
-        
-        li_exp = li.expand(B, B, T)
-        sj_exp = sorted_j.expand(B, B, T)
-        
-        idx = torch.searchsorted(
-            sj_exp.reshape(B*B, T).contiguous(),
-            li_exp.reshape(B*B, T).contiguous()
-        )
-        
-        idx = idx.clamp(0, T-1).view(B, B, T)
-        sj_exp = sj_exp.view(B, B, T)
-        
-        li_exp = li_exp.view(B, B, T)
-        hit = (sj_exp.gather(2, idx) == li_exp) & valid_mask.unsqueeze(1) & (li_exp != 0).unsqueeze(0)
-        
-        intersect_counts = hit.sum(dim=-1).float()
-        
-        min_lens = torch.minimum(
-            valid_lens.unsqueeze(1).expand(B, B),
-            valid_lens.unsqueeze(0).expand(B, B)
-        )
-        
-        overlap_ratio = intersect_counts / (min_lens + 1e-6)
-        ignore_mask = overlap_ratio > 0.8
-        ignore_mask.fill_diagonal_(False)
-        return ignore_mask
         
     def forward(
         self,
