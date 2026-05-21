@@ -212,7 +212,7 @@ def collate_func(data, args, info_all):
     dateinfo  = [[int(l[2]), float(l[3]), float(l[4])] for l in data]
     inds      = [l[0] for l in data]
 
-    ignore_mask_np = overlap_matrix[np.ix_(inds, inds)]  # (B, B) boolean numpy array
+    # ignore_mask_np = overlap_matrix[np.ix_(inds, inds)]  # (B, B) boolean numpy array
     
     lens        = np.array([len(k) for k in linkids])
     max_seq_len = lens.max()
@@ -251,7 +251,7 @@ def collate_func(data, args, info_all):
         'links_aug':   torch.from_numpy(padded_aug),
         'dateinfo':    torch.from_numpy(np.asarray(dateinfo, dtype=np.float32)),
         'culm_len':    torch.from_numpy(padded_culm),
-        'ignore_mask': torch.from_numpy(ignore_mask_np),
+        # 'ignore_mask': torch.from_numpy(ignore_mask_np),
         'lens':        torch.LongTensor(lens),
         'inds':        inds,
     }, time
@@ -367,7 +367,8 @@ def load_datadoct_pre(args):
     new_edgeinfo, edge_matrix, edge_id_col = preprocess_edgeinfo(edgeinfo, args)
     
     tdata_train = np.load(os.path.join(args.absPath, args.data_config['data_dir'], 'train.npy'), allow_pickle=True)
-    overlap_matrix = precompute_overlap_mask(tdata_train, max_edge_id=edge_matrix.shape[0]-1)
+    # overlap_matrix = precompute_overlap_mask(tdata_train, max_edge_id=edge_matrix.shape[0]-1)
+    overlap_matrix = None
     
     # with open(os.path.join(args.absPath,args.data_config['nodes_dir']), 'rb') as f:
     #     nodeinfo = pickle.load(f)

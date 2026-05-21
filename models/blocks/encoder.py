@@ -79,11 +79,16 @@ class ContrastiveEncoder(nn.Module):
                 B,
                 device=sim.device
             )
-
-            masked_sim = sim.masked_fill(
-                ignore_mask | pos_mask.bool(),
-                -1e9
-            )
+            if ignore_mask is not None:
+                masked_sim = sim.masked_fill(
+                    ignore_mask | pos_mask.bool(),
+                    -1e9
+                )
+            else:
+                masked_sim = sim.masked_fill(
+                    pos_mask.bool(),
+                    -1e9
+                )
 
             # =========================================
             # InfoNCE
