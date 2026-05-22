@@ -59,4 +59,4 @@ class ContrastiveModule(nn.Module):
         
         # let downstream task affect 10% of gradient for better alignment
         h_msm = h_msm * 0.9 + 0.1 * h_msm.detach() 
-        return h_msm.detach(), datetimerep,loss_cl, metric
+        return h_msm, datetimerep,loss_cl, metric
