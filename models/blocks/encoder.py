@@ -79,14 +79,19 @@ class ContrastiveEncoder(nn.Module):
                 B,
                 device=sim.device
             )
+            
+                
             if ignore_mask is not None:
                 masked_sim = sim.masked_fill(
                     ignore_mask | pos_mask.bool(),
                     -1e9
                 )
             else:
+                with torch.no_grad():
+                    false_negative_mask = raw_sim > 0.95
+                    false_negative_mask.fill_diagonal_(False)
                 masked_sim = sim.masked_fill(
-                    pos_mask.bool(),
+                    false_negative_mask | pos_mask.bool(),
                     -1e9
                 )
 
@@ -138,9 +143,8 @@ class ContrastiveEncoder(nn.Module):
         with torch.no_grad():
 
             offdiag = raw_sim[logits_mask]
-
+            
             metric = {
-
                 'embed_std_raw':
                     all_repr.std(dim=0).mean().item(),
 
@@ -168,6 +172,9 @@ class ContrastiveEncoder(nn.Module):
                 'loss_cov':
                     loss_cov.item(),
             }
+            if ignore_mask is not None:
+                mask_ratio = false_negative_mask.float().mean().item()
+                metric['mask_ratio'] = mask_ratio
 
         return total_loss, metric
 
