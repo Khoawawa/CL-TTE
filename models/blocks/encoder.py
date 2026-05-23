@@ -27,7 +27,7 @@ class ContrastiveEncoder(nn.Module):
         self,
         z1,
         z2,
-        ignore_mask
+        # ignore_mask
     ):
 
         B = z1.size(0)
@@ -80,20 +80,14 @@ class ContrastiveEncoder(nn.Module):
                 device=sim.device
             )
             
-                
-            if ignore_mask is not None:
-                masked_sim = sim.masked_fill(
-                    ignore_mask | pos_mask.bool(),
-                    -1e9
-                )
-            else:
-                with torch.no_grad():
-                    false_negative_mask = raw_sim > 0.95
-                    false_negative_mask.fill_diagonal_(False)
-                masked_sim = sim.masked_fill(
-                    false_negative_mask | pos_mask.bool(),
-                    -1e9
-                )
+    
+            with torch.no_grad():
+                false_negative_mask = raw_sim > 0.95
+                false_negative_mask.fill_diagonal_(False)
+            masked_sim = sim.masked_fill(
+                false_negative_mask | pos_mask.bool(),
+                -1e9
+            )
 
             # =========================================
             # InfoNCE
@@ -143,7 +137,8 @@ class ContrastiveEncoder(nn.Module):
         with torch.no_grad():
 
             offdiag = raw_sim[logits_mask]
-            
+            mask_ratio = false_negative_mask.float().mean().item()
+            mask_sum = false_negative_mask.float().sum().item()
             metric = {
                 'embed_std_raw':
                     all_repr.std(dim=0).mean().item(),
@@ -171,12 +166,10 @@ class ContrastiveEncoder(nn.Module):
 
                 'loss_cov':
                     loss_cov.item(),
+                'mask_ratio':
+                    mask_ratio,
+                'mask_sum':                    mask_sum
             }
-            if ignore_mask is not None:
-                mask_ratio = false_negative_mask.float().mean().item()
-                metric['mask_ratio'] = mask_ratio
-                mask_sum = ignore_mask.float().sum().item()
-                metric['mask_sum'] = mask_sum
 
         return total_loss, metric
 
@@ -252,7 +245,7 @@ class ContrastiveEncoder(nn.Module):
         self,
         orig_repr,
         aug_repr,
-        ignore_mask,
+        # ignore_mask,
         src_key_padding_mask=None,
         src_key_augment_padding_mask=None
     ):
@@ -274,7 +267,7 @@ class ContrastiveEncoder(nn.Module):
             loss_cl, metric = self.calculate_contrastive_loss(
                 trip_repr_orig,
                 trip_repr_aug,
-                ignore_mask
+                # ignore_mask
             )
         
 

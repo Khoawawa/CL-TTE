@@ -33,7 +33,7 @@ class ContrastiveModule(nn.Module):
         
         self.after_proj = nn.Linear(d_model + 1, d_model)
     
-    def forward(self, x, x_aug, dateinfo, culm_len, ignore_mask, src_key_padding_mask=None, src_key_augment_padding_mask=None):
+    def forward(self, x, x_aug, dateinfo, culm_len, src_key_padding_mask=None, src_key_augment_padding_mask=None):
         # x: (B, T, D)
         # x_aug: (B, T, D)
         # dateinfo: (B, 3)
@@ -50,7 +50,7 @@ class ContrastiveModule(nn.Module):
         h_msm, loss_cl, metric = self.contrastive_encoder(
             orig_repr,
             aug_repr,
-            ignore_mask=ignore_mask,
+            # ignore_mask=ignore_mask,
             src_key_padding_mask=src_key_padding_mask,
             src_key_augment_padding_mask=src_key_augment_padding_mask
         )

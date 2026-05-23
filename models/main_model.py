@@ -54,7 +54,7 @@ class Cl_TTE(nn.Module):
         padding_mask = inputs['padding_mask']
         
         h_msm, datetimerep, loss_cl, metric = self.contrastive_module(
-            x, x_aug, dateinfo, culm_len, None,
+            x, x_aug, dateinfo, culm_len,
             src_key_padding_mask=padding_mask, 
             src_key_augment_padding_mask=src_key_augment_padding_mask
         )
