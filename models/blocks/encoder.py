@@ -82,7 +82,7 @@ class ContrastiveEncoder(nn.Module):
             
     
             with torch.no_grad():
-                false_negative_mask = raw_sim > 0.95
+                false_negative_mask = raw_sim > 0.85
                 false_negative_mask.fill_diagonal_(False)
             masked_sim = sim.masked_fill(
                 false_negative_mask | pos_mask.bool(),
