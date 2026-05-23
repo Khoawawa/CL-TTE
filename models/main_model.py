@@ -48,13 +48,10 @@ class Cl_TTE(nn.Module):
         x_aug = inputs['links_aug']
         dateinfo = inputs['dateinfo']
         culm_len = inputs['culm_len']
+        lens = inputs['lens']
         src_key_augment_padding_mask = inputs['src_key_augment_padding_mask']
         # ignore_matrix = inputs['ignore_matrix']
-        lens = inputs['lens']
-        
-        max_len = torch.max(lens).item()
-        segment_mask = torch.arange(max_len, device=lens.device).unsqueeze(0) < lens.unsqueeze(1)
-        padding_mask = ~segment_mask
+        padding_mask = inputs['padding_mask']
         
         h_msm, datetimerep, loss_cl, metric = self.contrastive_module(
             x, x_aug, dateinfo, culm_len, None,

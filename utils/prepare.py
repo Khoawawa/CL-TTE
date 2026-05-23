@@ -399,6 +399,7 @@ def collate_func(data, args, info_all):
         'dateinfo':    torch.from_numpy(np.asarray(dateinfo, dtype=np.float32)),
         'culm_len':    torch.from_numpy(padded_culm),
         'src_key_augment_padding_mask': torch.from_numpy(src_key_augment_padding_mask),
+        'padding_mask': torch.from_numpy(np.arange(max_clean_len)[None, :] >= clean_lens[:, None]),
         # 'ignore_mask': torch.from_numpy(ignore_mask_np),
         'lens':        torch.LongTensor(lens),
         'inds':        inds,
