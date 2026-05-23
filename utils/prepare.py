@@ -317,7 +317,6 @@ def collate_func(data, args, info_all):
         padded_clean[i, :L]    = seg
         padded_culm[i, :L, 0]  = culm_len
 
-    # augmentation — batch it all at once instead of per-sample loop
     padded_aug = padded_clean.copy()
     for i, l in enumerate(lens):
         seg_aug, _ = augment_segments(padded_clean[i, :l],max_segments=max_allowed_len)
