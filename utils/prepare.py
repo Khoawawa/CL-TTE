@@ -295,38 +295,110 @@ def collate_func(data, args, info_all):
     max_seq_len = lens.max()
     feature_dim = edge_matrix.shape[1]
 
-    padded_clean   = np.zeros((len(data), max_seq_len, feature_dim), dtype=np.float32)
-    padded_culm    = np.zeros((len(data), max_seq_len, 1),           dtype=np.float32)
-    padded_edgeids = np.zeros((len(data), max_seq_len),              dtype=np.int64)
+    clean_segments = []
+    aug_segments = []
+
+    clean_culm = []
+
+    clean_lens = []
+    aug_lens = []
 
     for i, xs in enumerate(linkids):
+
         L = len(xs)
-        # ---- single vectorized lookup instead of a Python loop ----
-        seg                = edge_matrix[xs]          # (L, F)
-        padded_edgeids[i, :L] = edge_id_col[xs]
 
-        raw_lengths = seg[:, 2].copy()                # length column, before scaling
-        cum         = np.cumsum(raw_lengths)
-        culm_len    = np.concatenate([[0.0], cum[:-1]])
+        seg = edge_matrix[xs].copy()
 
-        length_and_culm  = np.stack([seg[:, 2], culm_len], axis=-1)
-        length_and_culm  = scaler.transform(length_and_culm)
-        seg[:, 2]        = length_and_culm[:, 0]
-        culm_len         = length_and_culm[:, 1]
+        raw_lengths = seg[:, 2].copy()
 
-        padded_clean[i, :L]    = seg
-        padded_culm[i, :L, 0]  = culm_len
+        cum = np.cumsum(raw_lengths)
 
-    padded_aug = padded_clean.copy()
-    for i, l in enumerate(lens):
-        seg_aug, _ = augment_segments(padded_clean[i, :l],max_segments=max_allowed_len)
-        padded_aug[i, :l] = seg_aug
+        culm_len = np.concatenate([[0.0], cum[:-1]])
 
+        length_and_culm = np.stack(
+            [seg[:, 2], culm_len],
+            axis=-1
+        )
+
+        length_and_culm = scaler.transform(length_and_culm)
+
+        seg[:, 2] = length_and_culm[:, 0]
+        culm_len = length_and_culm[:, 1]
+
+        # -------------------------------------------------
+        # CLEAN
+        # -------------------------------------------------
+
+        clean_segments.append(seg)
+
+        clean_culm.append(culm_len[:, None])
+
+        clean_lens.append(L)
+
+        # -------------------------------------------------
+        # AUGMENT
+        # -------------------------------------------------
+
+        seg_aug, aug_len = augment_segments(
+            seg,
+            max_segments=max_allowed_len
+        )
+
+        aug_segments.append(seg_aug)
+
+        aug_lens.append(aug_len)
+
+    clean_lens = np.asarray(clean_lens)
+    aug_lens = np.asarray(aug_lens)
+
+    max_clean_len = clean_lens.max()
+    max_aug_len = aug_lens.max()
+
+    # =====================================================
+    # PAD CLEAN
+    # =====================================================
+
+    padded_clean = np.zeros(
+        (len(data), max_clean_len, feature_dim),
+        dtype=np.float32
+    )
+
+    padded_culm = np.zeros(
+        (len(data), max_clean_len, 1),
+        dtype=np.float32
+    )
+
+    # =====================================================
+    # PAD AUG
+    # =====================================================
+
+    padded_aug = np.zeros(
+        (len(data), max_aug_len, feature_dim),
+        dtype=np.float32
+    )
+
+    for i in range(len(data)):
+
+        L = clean_lens[i]
+
+        padded_clean[i, :L] = clean_segments[i]
+
+        padded_culm[i, :L] = clean_culm[i]
+
+        A = aug_lens[i]
+
+        padded_aug[i, :A] = aug_segments[i]
+
+    src_key_augment_padding_mask = (
+        np.arange(max_aug_len)[None, :]
+        >= aug_lens[:, None]
+    )
     return {
         'links_clean': torch.from_numpy(padded_clean),
         'links_aug':   torch.from_numpy(padded_aug),
         'dateinfo':    torch.from_numpy(np.asarray(dateinfo, dtype=np.float32)),
         'culm_len':    torch.from_numpy(padded_culm),
+        'src_key_augment_padding_mask': torch.from_numpy(src_key_augment_padding_mask),
         # 'ignore_mask': torch.from_numpy(ignore_mask_np),
         'lens':        torch.LongTensor(lens),
         'inds':        inds,

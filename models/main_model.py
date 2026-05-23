@@ -48,6 +48,7 @@ class Cl_TTE(nn.Module):
         x_aug = inputs['links_aug']
         dateinfo = inputs['dateinfo']
         culm_len = inputs['culm_len']
+        src_key_augment_padding_mask = inputs['src_key_augment_padding_mask']
         # ignore_matrix = inputs['ignore_matrix']
         lens = inputs['lens']
         
@@ -58,7 +59,7 @@ class Cl_TTE(nn.Module):
         h_msm, datetimerep, loss_cl, metric = self.contrastive_module(
             x, x_aug, dateinfo, culm_len, None,
             src_key_padding_mask=padding_mask, 
-            src_key_augment_padding_mask=padding_mask
+            src_key_augment_padding_mask=src_key_augment_padding_mask
         )
 
         gru_input = h_msm.transpose(0,1).contiguous() # (T, B, D)
