@@ -175,6 +175,8 @@ class ContrastiveEncoder(nn.Module):
             if ignore_mask is not None:
                 mask_ratio = false_negative_mask.float().mean().item()
                 metric['mask_ratio'] = mask_ratio
+                mask_sum = ignore_mask.float().sum().item()
+                metric['mask_sum'] = mask_sum
 
         return total_loss, metric
 
