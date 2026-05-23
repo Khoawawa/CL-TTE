@@ -73,64 +73,141 @@ def parse_maxspeed(raw_val) -> int:
             return 0
 
     return snap_to_bucket(speed)
-
 def augment_segments(
     seg,
-    p_poi=0.05,
-    p_seg=0.05,
-    length_noise_std=0.01,
+    split_prob=0.05,
+    merge_prob=0.02,
+    max_segments=300,
 ):
     """
-    Conservative SSL augmentation.
+    Segmentation-granularity augmentation.
 
-    Assumes cumulative length is NOT used by contrastive learning.
+    Goal:
+        Simulate OSM / FMM inconsistencies across cities.
+
+    Assumptions:
+        seg[:, 0] = highway tag 1
+        seg[:, 1] = highway tag 2
+        seg[:, 2] = normalized segment length
+        seg[:, 3] = speed bucket
+        seg[:, 4:] = POI features
+
+    Strategy:
+        1. Randomly split some segments
+        2. Randomly merge compatible adjacent segments
+
+    Important:
+        POI/context features are duplicated during split.
+        This intentionally models inconsistent segment attribution.
     """
 
-    seg_aug = seg.copy().astype(np.float32)
-
-    T, F = seg_aug.shape
+    seg = seg.copy().astype(np.float32)
 
     # =========================================================
-    # MILD POI DROPOUT
+    # SPLIT
     # =========================================================
+    original_T = len(seg)
 
-    poi = seg_aug[:, 4:]
+    # how many extra tokens we can still add
+    remaining_budget = max_segments - original_T
 
-    mask_poi_rows = (
-        np.random.rand(T, 1) < p_poi
+    # maximum number of splits possible
+    max_possible_splits = max(0, remaining_budget)
+    
+    effective_split_prob = (
+        split_prob *
+        max(0.0, 1.0 - (original_T / max_segments))
     )
+    
+    split_segments = []
+    num_splits = 0
 
-    poi = poi * (~mask_poi_rows)
+    for row in seg:
 
-    seg_aug[:, 4:] = poi
+        can_split = (
+            num_splits < max_possible_splits
+        )
+
+        do_split = (
+            can_split and
+            np.random.rand() < effective_split_prob
+        )
+
+
+        if do_split:
+
+            r = np.random.uniform(0.3, 0.7)
+
+            row1 = row.copy()
+            row2 = row.copy()
+
+            row1[2] *= r
+            row2[2] *= (1.0 - r)
+
+            split_segments.append(row1)
+            split_segments.append(row2)
+
+            num_splits += 1
+
+        else:
+            split_segments.append(row)
+
+    seg_split = np.stack(split_segments, axis=0)
 
     # =========================================================
-    # VERY LIGHT FEATURE MASKING
+    # MERGE
     # =========================================================
 
-    seg_mask = np.random.rand(T) < p_seg
+    merged_segments = []
 
-    if seg_mask.all():
-        seg_mask[np.random.randint(T)] = False
-    seg_aug[seg_mask, 0:2] = 1 # highway -> unclassified
-    # speed bucket -> unknown (len(SPEED_BUCKETS))
-    seg_aug[seg_mask, 3] = len(SPEED_BUCKETS)
-    # remove poi context
-    seg_aug[seg_mask, 4:] = 0
+    i = 0
+    T = len(seg_split)
 
-    # =========================================================
-    # SMALL LENGTH NOISE
-    # =========================================================
+    while i < T:
 
-    noise = np.random.normal(
-        loc=1.0,
-        scale=length_noise_std,
-        size=seg_aug[:, 2].shape
-    )
+        # last segment
+        if i == T - 1:
+            merged_segments.append(seg_split[i])
+            break
 
-    seg_aug[:, 2] *= noise
+        cur = seg_split[i]
+        nxt = seg_split[i + 1]
 
-    return seg_aug, T
+        # only merge semantically compatible segments
+        compatible = (
+            cur[0] == nxt[0] and
+            cur[1] == nxt[1] and
+            cur[3] == nxt[3]
+        )
+
+        do_merge = (
+            compatible and
+            np.random.rand() < merge_prob
+        )
+
+        if do_merge:
+
+            new_seg = cur.copy()
+
+            # merge lengths
+            new_seg[2] = cur[2] + nxt[2]
+
+            # conservative POI handling:
+            # binary OR semantics
+            if seg.shape[1] > 4:
+                new_seg[4:] = np.maximum(cur[4:], nxt[4:])
+
+            merged_segments.append(new_seg)
+
+            i += 2
+
+        else:
+            merged_segments.append(cur)
+            i += 1
+
+    seg_aug = np.stack(merged_segments, axis=0)
+
+    return seg_aug.astype(np.float32), len(seg_aug)
 
 def preprocess_edgeinfo(edgeinfo, args):
     """Returns both the dict (legacy) and a dense numpy matrix for fast batch lookup."""
@@ -243,7 +320,7 @@ def collate_func(data, args, info_all):
     # augmentation — batch it all at once instead of per-sample loop
     padded_aug = padded_clean.copy()
     for i, l in enumerate(lens):
-        seg_aug, _ = augment_segments(padded_clean[i, :l])
+        seg_aug, _ = augment_segments(padded_clean[i, :l],max_segments=max_allowed_len)
         padded_aug[i, :l] = seg_aug
 
     return {
