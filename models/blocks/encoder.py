@@ -69,27 +69,56 @@ class ContrastiveEncoder(nn.Module):
                 device=sim.device
             )
             
-    
-            with torch.no_grad():
-                
-                false_negative_mask = raw_sim > 0.85
-                false_negative_mask.fill_diagonal_(False)
-            masked_sim = sim.masked_fill(
-                false_negative_mask | pos_mask.bool(),
-                -1e9
+            y_true = y_true.view(B, 1).float()
+            
+            eta_diff = torch.abs(
+                y_true - y_true.T
+            )
+            
+            relative_diff = eta_diff / (
+                torch.maximum(
+                    y_true,
+                    y_true.T
+                ) + 1e-6
+            )
+            
+            delta = 0.25
+            
+            
+            sigmoid_base = torch.sigmoid(
+                torch.tensor(
+                    -self.tau_I * delta,
+                    device=sim.device
+                )
+            )
+            
+            weights = (
+                torch.sigmoid(
+                    self.tau_I * (relative_diff - delta)
+                ) - sigmoid_base
+            ) / (1.0 - sigmoid_base)
+            
+            weights = weights.clamp(0.0, 1.0)
+            
+            weights.fill_diagonal_(0.0)
+
+            neg_logits = torch.exp(sim) * weights
+            neg_logits = neg_logits.masked_fill(
+                pos_mask.bool(),
+                0.0
+            )
+            pos_logits = torch.exp(
+                sim.diagonal()
             )
 
-            log_denom = torch.logsumexp(
-                masked_sim,
-                dim=1,
-                keepdim=True
+            denom = (
+                pos_logits +
+                neg_logits.sum(dim=1)
             )
 
-            log_prob = sim - log_denom
-
-            loss = -(
-                pos_mask * log_prob
-            ).sum(dim=1)
+            loss = -torch.log(
+                pos_logits / (denom + 1e-8)
+            )
 
             loss = loss.mean()
 
@@ -115,8 +144,7 @@ class ContrastiveEncoder(nn.Module):
         with torch.no_grad():
 
             offdiag = raw_sim[logits_mask]
-            mask_ratio = false_negative_mask.float().mean().item()
-            mask_sum = false_negative_mask.float().sum().item()
+            
             metric = {
                 'embed_std_raw':
                     all_repr.std(dim=0).mean().item(),
@@ -143,11 +171,7 @@ class ContrastiveEncoder(nn.Module):
                     loss_var.item(),
 
                 'loss_cov':
-                    loss_cov.item(),
-                'mask_ratio':
-                    mask_ratio,
-                'mask_sum':
-                    mask_sum
+                    loss_cov.item()
             }
 
         return total_loss, metric
