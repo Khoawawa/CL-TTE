@@ -27,14 +27,11 @@ class ContrastiveEncoder(nn.Module):
         self,
         z1,
         z2,
+        y_true
         # ignore_mask
     ):
 
         B = z1.size(0)
-
-        # ---------------------------------------------
-        # projector
-        # ---------------------------------------------
 
         z1_raw = z1.float()
         z2_raw = z2.float()
@@ -57,9 +54,6 @@ class ContrastiveEncoder(nn.Module):
             enabled=False
         ):
 
-            # =========================================
-            # sim matrix
-            # =========================================
             raw_sim = torch.matmul(z1, z2.T)
             
             sim = raw_sim / self.contrastive_temperature
@@ -70,11 +64,6 @@ class ContrastiveEncoder(nn.Module):
                 device=sim.device
             )
 
-            # =========================================
-            # positives are ONLY paired augmentations
-            # diagonal = positive
-            # =========================================
-
             pos_mask = torch.eye(
                 B,
                 device=sim.device
@@ -82,16 +71,13 @@ class ContrastiveEncoder(nn.Module):
             
     
             with torch.no_grad():
+                
                 false_negative_mask = raw_sim > 0.85
                 false_negative_mask.fill_diagonal_(False)
             masked_sim = sim.masked_fill(
                 false_negative_mask | pos_mask.bool(),
                 -1e9
             )
-
-            # =========================================
-            # InfoNCE
-            # =========================================
 
             log_denom = torch.logsumexp(
                 masked_sim,
@@ -106,10 +92,6 @@ class ContrastiveEncoder(nn.Module):
             ).sum(dim=1)
 
             loss = loss.mean()
-
-            # =========================================
-            # anti-collapse
-            # =========================================
 
             all_repr = torch.cat(
                 [z1_raw, z2_raw],
@@ -129,10 +111,6 @@ class ContrastiveEncoder(nn.Module):
                 1.0 * loss_var +
                 0.1 * loss_cov
             )
-
-        # =====================================================
-        # metrics
-        # =====================================================
 
         with torch.no_grad():
 
@@ -168,7 +146,8 @@ class ContrastiveEncoder(nn.Module):
                     loss_cov.item(),
                 'mask_ratio':
                     mask_ratio,
-                'mask_sum':                    mask_sum
+                'mask_sum':
+                    mask_sum
             }
 
         return total_loss, metric
@@ -247,7 +226,8 @@ class ContrastiveEncoder(nn.Module):
         aug_repr,
         # ignore_mask,
         src_key_padding_mask=None,
-        src_key_augment_padding_mask=None
+        src_key_augment_padding_mask=None,
+        y_true=None
     ):
         # x: (B, T, D)
         
@@ -267,6 +247,7 @@ class ContrastiveEncoder(nn.Module):
             loss_cl, metric = self.calculate_contrastive_loss(
                 trip_repr_orig,
                 trip_repr_aug,
+                y_true
                 # ignore_mask
             )
         

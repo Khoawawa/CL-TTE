@@ -56,7 +56,8 @@ class Cl_TTE(nn.Module):
         h_msm, datetimerep, loss_cl, metric = self.contrastive_module(
             x, x_aug, dateinfo, culm_len,
             src_key_padding_mask=padding_mask, 
-            src_key_augment_padding_mask=src_key_augment_padding_mask
+            src_key_augment_padding_mask=src_key_augment_padding_mask,
+            y_true=y_true
         )
 
         gru_input = h_msm.transpose(0,1).contiguous() # (T, B, D)

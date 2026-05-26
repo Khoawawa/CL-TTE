@@ -79,62 +79,42 @@ def augment_segments(
     merge_prob=0.02,
     max_segments=300,
 ):
-    """
-    Segmentation-granularity augmentation.
 
-    Goal:
-        Simulate OSM / FMM inconsistencies across cities.
+    seg = seg.astype(np.float32, copy=True)
 
-    Assumptions:
-        seg[:, 0] = highway tag 1
-        seg[:, 1] = highway tag 2
-        seg[:, 2] = normalized segment length
-        seg[:, 3] = speed bucket
-        seg[:, 4:] = POI features
+    T, F = seg.shape
 
-    Strategy:
-        1. Randomly split some segments
-        2. Randomly merge compatible adjacent segments
+    remaining_budget = max_segments - T
 
-    Important:
-        POI/context features are duplicated during split.
-        This intentionally models inconsistent segment attribution.
-    """
-
-    seg = seg.copy().astype(np.float32)
-
-    # =========================================================
-    # SPLIT
-    # =========================================================
-    original_T = len(seg)
-
-    # how many extra tokens we can still add
-    remaining_budget = max_segments - original_T
-
-    # maximum number of splits possible
-    max_possible_splits = max(0, remaining_budget)
-    
     effective_split_prob = (
         split_prob *
-        max(0.0, 1.0 - (original_T / max_segments))
+        max(0.0, 1.0 - (T / max_segments))
     )
-    
-    split_segments = []
-    num_splits = 0
 
-    for row in seg:
+    split_mask = (
+        np.random.rand(T) < effective_split_prob
+    )
 
-        can_split = (
-            num_splits < max_possible_splits
+    # respect budget
+    split_indices = np.where(split_mask)[0]
+
+    if len(split_indices) > remaining_budget:
+        keep = np.random.choice(
+            split_indices,
+            remaining_budget,
+            replace=False
         )
 
-        do_split = (
-            can_split and
-            np.random.rand() < effective_split_prob
-        )
+        split_mask[:] = False
+        split_mask[keep] = True
 
+    new_segments = []
 
-        if do_split:
+    for i in range(T):
+
+        row = seg[i]
+
+        if split_mask[i]:
 
             r = np.random.uniform(0.3, 0.7)
 
@@ -144,70 +124,71 @@ def augment_segments(
             row1[2] *= r
             row2[2] *= (1.0 - r)
 
-            split_segments.append(row1)
-            split_segments.append(row2)
-
-            num_splits += 1
+            new_segments.extend([row1, row2])
 
         else:
-            split_segments.append(row)
+            new_segments.append(row)
 
-    seg_split = np.stack(split_segments, axis=0)
+    seg_split = np.asarray(
+        new_segments,
+        dtype=np.float32
+    )
 
-    # =========================================================
-    # MERGE
-    # =========================================================
+    T2 = len(seg_split)
 
-    merged_segments = []
+    if T2 <= 1:
+        return seg_split, T2
+
+    cur = seg_split[:-1]
+    nxt = seg_split[1:]
+
+    compatible = (
+        (cur[:, 0] == nxt[:, 0]) &
+        (cur[:, 1] == nxt[:, 1]) &
+        (cur[:, 3] == nxt[:, 3])
+    )
+
+    merge_mask = (
+        compatible &
+        (np.random.rand(T2 - 1) < merge_prob)
+    )
+
+    merged = []
 
     i = 0
-    T = len(seg_split)
 
-    while i < T:
+    while i < T2:
 
-        # last segment
-        if i == T - 1:
-            merged_segments.append(seg_split[i])
+        if i == T2 - 1:
+            merged.append(seg_split[i])
             break
 
-        cur = seg_split[i]
-        nxt = seg_split[i + 1]
+        if merge_mask[i]:
 
-        # only merge semantically compatible segments
-        compatible = (
-            cur[0] == nxt[0] and
-            cur[1] == nxt[1] and
-            cur[3] == nxt[3]
-        )
+            new_seg = seg_split[i].copy()
 
-        do_merge = (
-            compatible and
-            np.random.rand() < merge_prob
-        )
+            new_seg[2] += seg_split[i + 1][2]
 
-        if do_merge:
+            if F > 4:
+                new_seg[4:] = np.maximum(
+                    seg_split[i][4:],
+                    seg_split[i + 1][4:]
+                )
 
-            new_seg = cur.copy()
-
-            # merge lengths
-            new_seg[2] = cur[2] + nxt[2]
-
-            # conservative POI handling:
-            # binary OR semantics
-            if seg.shape[1] > 4:
-                new_seg[4:] = np.maximum(cur[4:], nxt[4:])
-
-            merged_segments.append(new_seg)
+            merged.append(new_seg)
 
             i += 2
 
         else:
-            merged_segments.append(cur)
+            merged.append(seg_split[i])
             i += 1
 
-    seg_aug = np.stack(merged_segments, axis=0)
+    seg_aug = np.asarray(
+        merged,
+        dtype=np.float32
+    )
 
-    return seg_aug.astype(np.float32), len(seg_aug)
+    return seg_aug, len(seg_aug)
 
 def preprocess_edgeinfo(edgeinfo, args):
     """Returns both the dict (legacy) and a dense numpy matrix for fast batch lookup."""
@@ -325,19 +306,11 @@ def collate_func(data, args, info_all):
         seg[:, 2] = length_and_culm[:, 0]
         culm_len = length_and_culm[:, 1]
 
-        # -------------------------------------------------
-        # CLEAN
-        # -------------------------------------------------
-
         clean_segments.append(seg)
 
         clean_culm.append(culm_len[:, None])
 
         clean_lens.append(L)
-
-        # -------------------------------------------------
-        # AUGMENT
-        # -------------------------------------------------
 
         seg_aug, aug_len = augment_segments(
             seg,
@@ -354,10 +327,6 @@ def collate_func(data, args, info_all):
     max_clean_len = clean_lens.max()
     max_aug_len = aug_lens.max()
 
-    # =====================================================
-    # PAD CLEAN
-    # =====================================================
-
     padded_clean = np.zeros(
         (len(data), max_clean_len, feature_dim),
         dtype=np.float32
@@ -367,10 +336,6 @@ def collate_func(data, args, info_all):
         (len(data), max_clean_len, 1),
         dtype=np.float32
     )
-
-    # =====================================================
-    # PAD AUG
-    # =====================================================
 
     padded_aug = np.zeros(
         (len(data), max_aug_len, feature_dim),
@@ -420,10 +385,6 @@ class BatchSampler:
         self.indices = list(range(self.count))
 
     def __iter__(self):
-        '''
-        Divide the data into chunks with size = batch_size * 100
-        sort by the length in one chunk
-        '''
         np.random.shuffle(self.indices)
 
         chunk_size = self.batch_size * 100
@@ -460,10 +421,8 @@ class VarianceBucketSampler:
         self.indices = list(range(self.count))
 
     def __iter__(self):
-        # 1. Global shuffle first
         np.random.shuffle(self.indices)
 
-        # 2. Divide into massive chunks (same as before)
         chunk_size = self.batch_size * 100
         chunks = (self.count + chunk_size - 1) // chunk_size
 
@@ -471,8 +430,7 @@ class VarianceBucketSampler:
             start = i * chunk_size
             end = min((i + 1) * chunk_size, self.count)
             chunk_idx = self.indices[start:end]
-            
-            # 3. Sort the mega-chunk by length (This bounds our max padding)
+
             chunk_idx.sort(
                 key=lambda x: (
                     self.lengths[x] + np.random.randint(-10, 10)
@@ -480,9 +438,6 @@ class VarianceBucketSampler:
                 reverse=True
             )
             
-            # 4. THE FIX: Sub-pool shuffling
-            # Group into pools of e.g. 10 batches. 
-            # Shuffle INSIDE the pool before yielding to guarantee variance.
             window = self.batch_size * 4
 
             for s in range(0, len(chunk_idx), window):

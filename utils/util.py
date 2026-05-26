@@ -40,11 +40,6 @@ def to_var(var, device=0):
         return var
     
 class LossBalancer:
-    """
-    EMA-smoothed dynamic loss balancer.
-    Keeps l_cl at the same magnitude as l_eta by computing a smoothed
-    scale = ema(l_eta) / ema(l_cl) and clamping it to a safe range.
-    """
     def __init__(self, ema_decay=0.9, clamp=(0.1, 10.0)):
         self.ema_decay = ema_decay
         self.clamp     = clamp
@@ -92,11 +87,7 @@ class LossBalancer:
         scale = self.ema_eta / (self.ema_cl + 1e-6)
         scale = max(self.clamp[0], min(self.clamp[1], scale))
         return scale
- 
-# ---------------------------------------------------------------------------
-# Scheduler factory
-# ---------------------------------------------------------------------------
- 
+
 # def get_warmup_cosine_scheduler(optimizer, warmup_steps: int, total_steps: int):
 #     """
 #     Linear warmup for `warmup_steps` steps, then cosine decay to 0.
@@ -120,8 +111,8 @@ def get_warmup_cosine_scheduler_with_floor(optimizer, warmup_steps, total_steps)
         return lr_lambda
     
     return torch.optim.lr_scheduler.LambdaLR(optimizer, [
-        make_lambda(0.01),   # regression: decay to 1% of peak (near zero)
-        make_lambda(0.33),   # CL: floor at 33% of peak → 1e-4 if peak is 3e-4
+        make_lambda(0.01),   
+        make_lambda(0.33),
     ])
 def save_model(path: str, **kwargs):
     torch.save(kwargs, path)

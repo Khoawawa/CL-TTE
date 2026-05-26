@@ -33,7 +33,7 @@ class ContrastiveModule(nn.Module):
         
         self.after_proj = nn.Linear(d_model + 1, d_model)
     
-    def forward(self, x, x_aug, dateinfo, culm_len, src_key_padding_mask=None, src_key_augment_padding_mask=None):
+    def forward(self, x, x_aug, dateinfo, culm_len, src_key_padding_mask=None, src_key_augment_padding_mask=None, y_true=None):
         # x: (B, T, D)
         # x_aug: (B, T, D)
         # dateinfo: (B, 3)
@@ -52,7 +52,8 @@ class ContrastiveModule(nn.Module):
             aug_repr,
             # ignore_mask=ignore_mask,
             src_key_padding_mask=src_key_padding_mask,
-            src_key_augment_padding_mask=src_key_augment_padding_mask
+            src_key_augment_padding_mask=src_key_augment_padding_mask,
+            y_true=y_true
         )
         
         h_msm = self.after_proj(torch.cat([h_msm, culm_len], dim=-1))
